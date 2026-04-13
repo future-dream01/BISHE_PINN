@@ -3,10 +3,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+#################################### 卷积 #######################################
 # 网络骨架
-class Backbone_D(nn.Module):
+class Backbone_Conv(nn.Module):
     def __init__(self):
-        super(Backbone_D,self).__init__()
+        super(Backbone_Conv,self).__init__()
         self.feture_map=[]              
         self.relu=nn.ReLU()     # 激活函数
         # 第一小层 尺寸：128->512 通道数：1->64
@@ -120,9 +121,9 @@ class Backbone_D(nn.Module):
         return self.feture_map
 
 # 特征融合，特征图通道数合成 1 个,尺寸变为128*128
-class Neck_D(nn.Module):
+class Neck_Conv(nn.Module):
     def __init__(self):
-        super(Neck_D,self).__init__()
+        super(Neck_Conv,self).__init__()
         self.relu=nn.ReLU()
         self.conv1=nn.Conv2d(in_channels=512,out_channels=128,kernel_size=3,stride=1,padding=1)
         self.conv2=nn.Conv2d(in_channels=128,out_channels=64,kernel_size=3,stride=1,padding=1)
@@ -178,7 +179,7 @@ class CustomDownsample(nn.Module):
         return x
 
 # 残差模块
-class Resn(nn.Module):
+class Resn_Conv(nn.Module):
     def __init__(self,input_channel,output_channel):
         super(Resn,self).__init__()
         self.relu=nn.ReLU()     # 激活函数
@@ -217,5 +218,34 @@ class Resn(nn.Module):
         x=self.relu(x)
         out=x+base
         out=self.relu(out)
+        return out
+
+
+##################################### 全连接 ###################################
+class Backbone_Lin(nn.Mdule):
+    def __init__(nn.Module):
+        
+
+# 残差全连接模块
+class Resn_Lin(nn.Module):
+    def __init__(self,input_channel,output_channel):
+        super(Resn,self).__init__()
+        self.Tanh=nn.Tanh()  
+        self.lin1=nn.Linear(input_channel,256)
+        self.lin2=nn.Linear(256,256)
+        self.lin3=nn.Linear(256,256)
+        self.lin4=nn.Linear(256,output_channel)
+
+    def forward(self,x):
+        base=self.lin1(x)
+        x=self.Tanh(x)
+        x=self.lin2(x)
+        x=self.Tanh(x)
+        x=self.lin3(x)
+        x=self.Tanh(x)
+        x=self.lin4(x)
+        x=self.Tanh(x)
+        out=x+base
+        out=self.Tanh(out)
         return out
 
