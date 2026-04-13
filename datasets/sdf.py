@@ -1,80 +1,98 @@
 import trimesh
 import numpy as np
+import pandas as pd
+import os
 
-# ====================== 1. 加载STL ======================
-mesh_fluid = trimesh.load("fluid.stl")
-mesh_wall = trimesh.load("wall.stl")
+# ====================== 配置区域 ======================
+mesh_wall_path = "wall.stl"
+mesh_fluid_path = "fluid.stl"
 
-# 坐标缩放
-mesh_fluid.apply_scale(0.001)
+points_input = np.array([
+    [0.5,0.029619377,0.035493694],
+    [0.5,0.031041767,0.034030586],
+    [0.5,0.03430242,0.030420672]
+])
+
+csv_input_path = "x_0.2971830m_结果.csv" 
+use_csv = False
+output_path = "points_with_wall_distance.csv"
+# ====================================================
+
+# ====================== 1. 加载 STL ======================
+print("正在加载 STL 文件...")
+mesh_wall = trimesh.load(mesh_wall_path)
+mesh_fluid = trimesh.load(mesh_fluid_path)
 mesh_wall.apply_scale(0.001)
-
-# 修复壁面STL法向（解决壁距负数！）
+mesh_fluid.apply_scale(0.001)
 trimesh.repair.fix_normals(mesh_wall)
+trimesh.repair.fix_normals(mesh_fluid)
+print(f"✅ STL 加载完成")
 
-# 验证流体域封闭
-if not mesh_fluid.is_watertight:
-    trimesh.repair.fill_holes(mesh_fluid)
-    trimesh.repair.fix_normals(mesh_fluid)
-print(f"✅ 流体域STL验证通过，是否封闭：{mesh_fluid.is_watertight}，三角面数量：{len(mesh_fluid.faces)}")
+# ====================== 2. 加载点 ======================
+if use_csv and os.path.exists(csv_input_path):
+    df = pd.read_csv(csv_input_path)
+    points = df[["X", "Y", "Z"]].values
+else:
+    points = points_input
 
-# ====================== 2. 初始化查询器 ======================
-proximity_fluid = trimesh.proximity.ProximityQuery(mesh_fluid)
+n_points = len(points)
+print(f"✅ 待计算点数: {n_points}")
+
+# ====================== 3. 计算 (终极修复区) ======================
+print("\n正在计算壁面距离...")
 proximity_wall = trimesh.proximity.ProximityQuery(mesh_wall)
+proximity_fluid = trimesh.proximity.ProximityQuery(mesh_fluid)
 
-# ====================== 3. 生成随机点 ======================
-bounds = mesh_fluid.bounds
-x_min, y_min, z_min = bounds[0]
-x_max, y_max, z_max = bounds[1]
-
-num_points = 100000
-points = np.random.uniform(
-    low=[x_min, y_min, z_min],
-    high=[x_max, y_max, z_max],
-    size=(num_points, 3)
-)
-
-# ====================== 4. 计算 SDF（判断内外） ======================
+# --- 计算 SDF ---
 signed_distance = proximity_fluid.signed_distance(points)
-inside_mask = signed_distance > 0
+# 🔥 终极修复1：强制转成 numpy 数组并拍平
+signed_distance = np.array(signed_distance).flatten()
 
-# 过滤内部点
-points_inside = points[inside_mask]
-signed_inside = signed_distance[inside_mask]
+# --- 判断内部 ---
+is_inside = signed_distance > 0
+is_inside = np.array(is_inside).flatten()
 
-# ====================== 5. 计算壁面距离（强制转一维！！） ======================
-d_wall_inside, _, _ = proximity_wall.on_surface(points_inside)
-d_wall_inside = np.ravel(d_wall_inside)  # 关键：转成一维数组
+# --- 计算壁面距离 ---
+d_wall, _, _ = proximity_wall.on_surface(points)
+d_wall = np.array(d_wall).flatten()
+d_wall = np.abs(d_wall)
 
-# 强制取绝对值（彻底杜绝负数！）
-d_wall_inside = np.abs(d_wall_inside)
-
-# ====================== 6. 打印信息 ======================
+# ====================== 4. 🔥 终极调试：打印长度，看看到底谁不一样 ======================
 print("\n" + "="*60)
-print(f"生成总点数：{num_points}")
-print(f"内部点数：{len(points_inside)}，接受率：{len(points_inside)/num_points:.2%}")
-print(f"内部点SDF范围：[{signed_inside.min():.4f}, {signed_inside.max():.4f}]")
-print(f"壁面距离范围：[{d_wall_inside.min():.6f}, {d_wall_inside.max():.6f}] m")
+print("【调试信息】各数组长度：")
+print(f"  坐标点 (points):    {n_points}")
+print(f"  SDF:                 {len(signed_distance)}")
+print(f"  是否在内部:          {len(is_inside)}")
+print(f"  壁面距离:            {len(d_wall)}")
 print("="*60)
 
-# ====================== 7. 测试点输出（彻底修复报错） ======================
-print("\n测试点验证：")
-test_indices = [0, 10, 20, 30]
-for idx in test_indices:
-    if idx < len(points_inside):
-        p = points_inside[idx]
-        sd = signed_inside[idx]
-        dw = d_wall_inside[idx]
-        
-        # 转成普通数字再打印，绝对不报错
-        p_str = f"[{p[0]:.3f},{p[1]:.3f},{p[2]:.3f}]"
-        print(f"点{idx}: 坐标={p_str}, SDF={float(sd):.4f}, 壁距={float(dw):.6f}m")
+# ====================== 5. 🔥 终极暴力修复：强制截取或填充到一样长 ======================
+def force_length(arr, target_len):
+    arr = np.array(arr).flatten()
+    if len(arr) == target_len:
+        return arr
+    elif len(arr) > target_len:
+        return arr[:target_len] # 截取前N个
+    else:
+        # 如果太短，填充0 (一般不会走到这一步)
+        return np.pad(arr, (0, target_len - len(arr)), mode='constant')
 
-# ====================== 8. 保存 ======================
-np.savez("pinn_sdf_data.npz",
-    points=points_inside,
-    sdf=signed_inside,
-    d_wall=d_wall_inside
-)
+signed_distance = force_length(signed_distance, n_points)
+is_inside = force_length(is_inside, n_points)
+d_wall = force_length(d_wall, n_points)
 
-print("\n✅ 全部完成！数据已保存到 pinn_sdf_data.npz")
+# ====================== 6. 输出 ======================
+result_df = pd.DataFrame({
+    "X": points[:, 0],
+    "Y": points[:, 1],
+    "Z": points[:, 2],
+    "壁面距离_m": d_wall,
+    "是否在流场内": is_inside,
+    "SDF": signed_distance
+})
+
+print("\n计算结果预览:")
+print(result_df)
+
+result_df.to_csv(output_path, index=False, encoding="utf-8-sig")
+print(f"\n✅ 全部完成！结果已保存至: {output_path}")
