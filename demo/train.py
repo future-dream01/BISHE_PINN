@@ -1,7 +1,7 @@
 import os, sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), './..'))
 sys.path.append(project_root)
-from model import DeGenerater,data_prepare, loss_TOTAL,psnr,ssim,allgraph
+from model import PINN,data_prepare, loss_TOTAL,psnr,ssim,allgraph
 import torch.optim as optim
 from loguru import logger
 from datetime import datetime
@@ -29,10 +29,10 @@ logger.add(log_file_path,rotation="50000 MB",level="INFO")               #创建
 def train():
     # 训练配置
     global train_nan_loss,val_nan_loss
-    train_dataloader, val_dataloader = data_prepare(BATCHSIZE)        # 创建数据加载器对象
-    D = DeGenerater()                           # 创建模型对象
-    D.to(device)                                # 将模型转移到计算设备上
-    optimizer_D = optim.Adam(D.parameters(), lr=0.00005)    # 创建梯度优化器
+    train_dataloader, val_dataloader ,input_min ,input_max= data_prepare(BATCHSIZE)        # 创建数据加载器对象
+    M = PINN()                           # 创建模型对象
+    M.to(device)                                # 将模型转移到计算设备上
+    optimizer_M = optim.Adam(M.parameters(), lr=0.00005)    # 创建梯度优化器
     start_epoch=1 
     train_losses = []
     train_psnrs = []
@@ -46,7 +46,7 @@ def train():
 
     if LOAD_CP:                                 # 是否加载先前的检查点文件
         logger.info(f"正在加载模型文件")
-        D,optimizer_D,start_epoch,train_losses,train_psnrs,train_ssims,val_losses,val_psnrs,val_ssims,val_psnrs_pr,val_ssims_pr,power_datas=load_checkpoint(D,optimizer_D,CP_PATH)
+        M,optimizer_M,start_epoch,train_losses,train_psnrs,train_ssims,val_losses,val_psnrs,val_ssims,val_psnrs_pr,val_ssims_pr,power_datas=load_checkpoint(M,optimizer_M,CP_PATH)
         max_power_data=power_datas[start_epoch-1]
         d_epoch_num=start_epoch
         start_epoch+=1
@@ -75,26 +75,27 @@ def train():
 
         ###################### 训练集训练 #########################
 
-        D.train()                       # 将模型转换为训练模式
+        M.train()                       # 将模型转换为训练模式
+        M.requires_grad_(True)          # 开启梯度，这是为了损失函数计算能用自动微分
         loss_epoch =psnr_epoch=ssim_epoch= 0
         train_batches = 0  # 批次计数
         logger.info(f"第{epoch}轮训练开始，训练集开始训练")
         for images, labels in train_dataloader:
             # 每次迭代生成新的输入和输出
             images, labels = images.to(device), labels.to(device)
-            optimizer_D.zero_grad()  # 梯度归零
+            optimizer_M.zero_grad()  # 梯度归零
             # 前向传播
             with autocast():
-                output = D(images)
+                output = M(images)
                 labels=labels/255
-                loss_batch = loss_TOTAL(device, output, labels)
+                loss_batch = loss_TOTAL(device, output, labels,input_max,input_min)             # 计算损失
                 psnr_batch= psnr(output.detach()*255,labels*255)                     # 计算训练集的PSNR
                 ssim_batch= ssim(output.detach(),labels)                     # 计算训练集的SSIM
                 train_batches += 1
                 logger.info(f"epoch:{epoch},batch:{train_batches},\n loss:{loss_batch.item()} \n PSNR:{psnr_batch} \n SSIM:{ssim_batch}")
             if not torch.isnan(loss_batch):
                 scaler.scale(loss_batch).backward()      # 反向传播
-                scaler.step(optimizer_D)            # 梯度下降
+                scaler.step(optimizer_M)            # 梯度下降
                 scaler.update()
                 loss_epoch += loss_batch.item()  # 累加损失
                 psnr_epoch += psnr_batch         # 累加PSNR
@@ -120,14 +121,14 @@ def train():
         ########################## 验证集评估 #################################
 
         logger.info(f"第{epoch}轮训练集训练完成,开始验证集校验工作")
-        D.eval()
+        M.eval()
         val_batches=0
         with torch.no_grad():
             for images, labels in val_dataloader:
                 images, labels = images.to(device), labels.to(device)
-                optimizer_D.zero_grad()  # 梯度归零
+                optimizer_M.zero_grad()  # 梯度归零
                 with autocast():
-                    output = D(images)
+                    output = M(images)
                     labels=labels/255
                     loss_batch = loss_TOTAL(device, output, labels)
                     psnr_batch= psnr(output.detach()*255,labels*255)                     # 计算验证集的PSNR
@@ -175,12 +176,12 @@ def train():
 
         logger.info(f"第{epoch}轮验证集评估完成，开始判断是否保存本轮权重")
         if (epoch==start_epoch)and LOAD_CP==False:
-            save_checkpoint(D,optimizer_D,epoch,train_losses,train_psnrs,train_ssims,val_losses,val_psnrs,val_ssims,val_psnrs_pr,val_ssims_pr,power_datas, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
+            save_checkpoint(M,optimizer_M,epoch,train_losses,train_psnrs,train_ssims,val_losses,val_psnrs,val_ssims,val_psnrs_pr,val_ssims_pr,power_datas, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
             logger.info(f"第一轮权重已保存")
             max_power_data= power_data            # 初始化最大效果值
             d_epoch_num = start_epoch             # 初始化效果最好的轮次数
         if (epoch==300):
-            save_checkpoint(D,optimizer_D,epoch,train_losses,train_psnrs,train_ssims,val_losses,val_psnrs,val_ssims,val_psnrs_pr,val_ssims_pr,power_datas, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
+            save_checkpoint(M,optimizer_M,epoch,train_losses,train_psnrs,train_ssims,val_losses,val_psnrs,val_ssims,val_psnrs_pr,val_ssims_pr,power_datas, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
             logger.info(f"最后一轮权重已保存")
         else:
             if power_data > max_power_data:
@@ -191,7 +192,7 @@ def train():
                 d_epoch_num=epoch                 # 更新效果最好的轮次数
                 max_power_data= power_data        # 更新最好的效果值
                 
-                save_checkpoint(D,optimizer_D,epoch,train_losses,train_psnrs,train_ssims,val_losses,val_psnrs,val_ssims,val_psnrs_pr,val_ssims_pr,power_datas, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
+                save_checkpoint(M,optimizer_M,epoch,train_losses,train_psnrs,train_ssims,val_losses,val_psnrs,val_ssims,val_psnrs_pr,val_ssims_pr,power_datas, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
                 logger.info(f"保存了当前的第{d_epoch_num}轮权重,最好效果为{max_power_data}")
             else :
                 logger.info("不保存此轮权重")

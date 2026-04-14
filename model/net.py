@@ -16,7 +16,7 @@ class Backbone_Conv(nn.Module):
         self.conv3=nn.Conv2d(in_channels=16,out_channels=32,kernel_size=3,stride=1,padding=1)
         self.bn1=nn.BatchNorm2d(32)
         #self.se1=SEModule(32)
-        self.res1=Resn(32,64)
+        self.res1=Resn_Conv(32,64)
         self.upconv1=Upsample_Conv(64,64,512,512)
 
         # 第二小层 512->128 ; 通道数：64->128
@@ -27,7 +27,7 @@ class Backbone_Conv(nn.Module):
         self.conv6=nn.Conv2d(in_channels=256,out_channels=512,kernel_size=3,stride=1,padding=1)
         self.bn4=nn.BatchNorm2d(512)
         #self.se2=SEModule(512)
-        self.res2=Resn(512,256)
+        self.res2=Resn_Conv(512,256)
         self.downconv1=CustomDownsample(256,128,(128,128))
 
         # 第三小层 尺寸：128->64 ； 通道数：128->256
@@ -38,7 +38,7 @@ class Backbone_Conv(nn.Module):
         self.conv9=nn.Conv2d(in_channels=512,out_channels=1024,kernel_size=3,stride=1,padding=1)
         self.bn7=nn.BatchNorm2d(1024)
         #self.se3=SEModule(1024)
-        self.res3=Resn(1024,512)
+        self.res3=Resn_Conv(1024,512)
         self.downconv2=CustomDownsample(512,256,(64,64))
 
         # 第四小层 尺寸：64->16 ； 通道数：256->512
@@ -49,7 +49,7 @@ class Backbone_Conv(nn.Module):
         self.conv12=nn.Conv2d(in_channels=1024,out_channels=1024,kernel_size=3,stride=1,padding=1)
         self.bn10=nn.BatchNorm2d(1024)
         #self.se4=SEModule(1024)
-        self.res4=Resn(1024,512)
+        self.res4=Resn_Conv(1024,512)
         self.downconv3=CustomDownsample(512,512,(16,16))
 
     def forward(self,x):
@@ -181,7 +181,7 @@ class CustomDownsample(nn.Module):
 # 残差模块
 class Resn_Conv(nn.Module):
     def __init__(self,input_channel,output_channel):
-        super(Resn,self).__init__()
+        super(Resn_Conv,self).__init__()
         self.relu=nn.ReLU()     # 激活函数
         # 分支1
         self.conv1=nn.Conv2d(in_channels=input_channel,out_channels=output_channel,kernel_size=3,stride=1,padding=1)  
@@ -222,14 +222,41 @@ class Resn_Conv(nn.Module):
 
 
 ##################################### 全连接 ###################################
+# 全连接神经网络骨架
 class Backbone_Lin(nn.Mdule):
-    def __init__(nn.Module):
-        
+    def __init__(self):
+        super(Backbone_Lin,self).__init__()
+        self.Tanh()=nn.Tanh()
+        self.Lin1=nn.Linear(4,64)
+        self.Lin2=nn.Linear(64,128)
+        self.Lin3=nn.Linear(128,256)
+        self.res1=Resn_Lin(256,256)
+        self.res2=Resn_Lin(256,256)
+        self.Lin4=nn.Linear(256,128)
+        self.Lin5=nn.Linear(128,64)
+        self.Lin6=nn.Linear(64,7)
+    def forward(self,x):
+        x=self.Lin1(x)
+        x=self.Tanh(x)
+        x=self.Lin2(x)
+        x=self.Tanh(x)
+        x=self.Lin3(x)
+        x=self.Tanh(x)
+        x=self.res1(x)
+        x=self.res2(x)
+        x=self.Lin4(x)
+        x=self.Tanh(x)
+        x=self.Lin5(x)
+        x=self.Tanh(x)
+        x=self.Lin6(x)
+        out=self.Tanh(x)
+        return out
+
 
 # 残差全连接模块
 class Resn_Lin(nn.Module):
     def __init__(self,input_channel,output_channel):
-        super(Resn,self).__init__()
+        super(Resn_Lin,self).__init__()
         self.Tanh=nn.Tanh()  
         self.lin1=nn.Linear(input_channel,256)
         self.lin2=nn.Linear(256,256)

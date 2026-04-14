@@ -126,13 +126,71 @@ def loss_criterion(device, output, label):
     return loss
 
 # 总损失
-def loss_TOTAL(device, output, label):
+def loss_TOTAL(device, output, label,input_max,input_min):
     mse_loss = loss_MSE(device, output, label)
     l1_loss = loss_L1(device, output, label)
-    criterion_loss=loss_criterion(device, output, label)
-    total_loss =0.4* mse_loss  + 0.2*l1_loss +0.4*criterion_loss
+    #criterion_loss=loss_criterion(device, output, label)
+    PDE=RANS_PDE(input_max,input_min)
+    PDE_loss=PDE.rans_res()
+    total_loss =0.4* mse_loss  + 0.2*l1_loss +0.4*
     return total_loss
 
 # 残差损失
-def loss_PDE(output):
+class RANS_PDE():
+    def __init__(self,net_output,net_input,input_max,input_min):  # (网络输出（无量纲化），网路输出（归一化），网络输入最大值，网络输入最小值)
+        # 近壁k-ω组常数
+        self.alpha1 = 5/9
+        self.beta1 = 0.075
+        self.sigma_k1 = 0.85
+        self.sigma_omega1 = 0.5
+        # 远场k-ε组常数
+        self.alpha2 = 0.44
+        self.beta2 = 0.0828
+        self.sigma_k2 = 1.0
+        self.sigma_omega2 = 0.856
+        # 全局固定常数
+        self.beta_star = 0.09
+        self.a1 = 0.31
+        self.Pr_t = 0.9    # 湍流普朗特数
+        self.gamma = 1.4   # 空气比热比
+        self.Ma = 0.5      # 来流马赫数
+        self.Re = 1e6      # 雷诺数
+        self.net_output=net_output
+        self.net_input=net_input
+        self.input_max=input_max
+        self.input_min=input_min
+
+    # 求导函数
+    def grad(self,y,x):
+        out=torch.autograd.grad(y.sum(),x,create_graph=True,retain_graph=True)[0]  # 无量纲输出对归一化输入的导数
+        out=out*(2/(self.input_max-self.input_min))  # 乘上归一化输入对无量纲输入的导数，得无量纲输出对无量纲输入的导数
+        return out
     
+    def rans_res(self): # 输入input形状：[无量纲x，无量纲y，无量纲z，无量纲壁面距离d]
+        N=input.shape[0]    # 批次数
+        U=self.net_output[:,0:1]
+        V=self.net_output[:,1:2]
+        W=self.net_output[:,2:3]
+        P=self.net_output[:,3:4]
+        T=self.net_output[:,4:5]
+        K=self.net_output[:,5:6]
+        omega=self.net_output[:,6:7]
+        omega=torch.clamp(omega,min=1e-8) # 设置下限，壁面除0
+
+        # U关于x、y、z的导数
+        grad_U=self.grad(U,self.net_input)
+        dU_dX=grad_U[:,0:1]
+        dU_dY=grad_U[:,1:2]
+        dU_dZ=grad_U[:,2:3]
+        # V关于x、y、z的导数
+        grad_V=self.grad(V,self.net_input)
+        dV_dX=grad_V[:,0:1]
+        dV_dY=grad_V[:,1:2]
+        dV_dZ=grad_V[:,2:3]
+        # W关于x、y、z的导数
+        grad_W=self.grad(V,self.net_input)
+        dV_dX=grad_V[:,0:1]
+        dV_dY=grad_V[:,1:2]
+        dV_dZ=grad_V[:,2:3]
+
+

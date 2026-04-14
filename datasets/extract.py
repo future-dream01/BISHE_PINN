@@ -7,11 +7,11 @@ import matplotlib.pyplot as plt
 # 参数设置+无量纲化
 cas_path = "066D_A3_hermites08_banmo_042_101.cas"   # cas dat文件名
 zone_id = 1                                         # 流体域Zone ID
-output_total_csv = "066D_A3_hermites08_banmo_042_101.csv"  # 总输出文件
+output_total_csv = "066D_A3_hermites08_banmo_042_101_train.csv"  # 总输出文件
 N1 = 5    # 0.297183 ~ 0.34内的截面数
 N2 = 15   # 0.34 ~ 0.47内的截面数
 N3 = 5    # 0.47 ~ 0.515712内的截面数
-total_samples_per_section = 1000  # 每个截面的采样点总数
+total_samples_per_section = 3000  # 每个截面的采样点总数
 near_wall_ratio = 0.65            # 近壁区采样点占比
 near_wall_threshold = 0.005       # 近壁区阈值：<0.005m
 L=0.095    # 特征长度
@@ -128,7 +128,7 @@ def main():
         print(f"✅ 采样完成：目标{total_samples_per_section}点 → 实际{len(sampled_df)}点")
         
         # 生成【所有截面】的可视化图像
-        #visualize_sampling_points(slice_plane.points, sampled_df, x_pos)
+        visualize_sampling_points(slice_plane.points, sampled_df, x_pos)
 
     # 合并、保存数据
     if len(all_sampled_data) == 0:
