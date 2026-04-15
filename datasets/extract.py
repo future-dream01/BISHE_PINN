@@ -4,7 +4,7 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 
-# 参数设置+无量纲化
+# 参数设置
 cas_path = "066D_A3_hermites08_banmo_042_101.cas"   # cas dat文件名
 zone_id = 1                                         # 流体域Zone ID
 output_total_csv = "066D_A3_hermites08_banmo_042_101_train.csv"  # 总输出文件
@@ -18,7 +18,7 @@ L=0.095    # 特征长度
 M0=0.42    # 来流马赫数
 T0=249.15  # 来流静温
 P0=47181   # 来流静压
-U0=(1.4*287*T0)**0.5 # 来流速度
+U0=M0*(1.4*287*T0)**0.5# 来流速度
 Rou0=P0/(287*T0)     # 来流密度
 
 
@@ -30,7 +30,7 @@ def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio):
     分层采样：固定总采样数，近壁多采、远壁少采，占比和为100%
     返回采样后的DataFrame
     """
-    # 转为DataFrame
+    # 转为DataFrame并无量纲化
     df = pd.DataFrame({
         "X": (slice_data.points[:, 0])/L,
         "Y": (slice_data.points[:, 1])/L,
@@ -39,7 +39,7 @@ def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio):
         "U": (slice_data["X_VELOCITY"])/U0,
         "V": (slice_data["Y_VELOCITY"])/U0,
         "W": (slice_data["Z_VELOCITY"])/U0,
-        "静压": ((slice_data["PRESSURE"])-P0)/(0.5*Rou0*U0*U0),
+        "静压": ((slice_data["PRESSURE"])-P0)/(Rou0*U0*U0),
         "静温": (slice_data["TEMPERATURE"])/T0,
         "湍流动能": (slice_data["TKE"])/(U0*U0),
         "比耗散率": (slice_data["SDR"])*(L/U0),

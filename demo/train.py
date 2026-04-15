@@ -13,7 +13,13 @@ from PIL import Image
 import numpy as np
 import random
 
-# 参数设定
+# 无量纲参数设定
+L=0.095    # 特征长度
+M0=0.42    # 来流马赫数
+T0=249.15  # 来流静温
+P0=47181   # 来流静压
+
+# 训练超参数设定
 EPOCHES = 300    # 轮次数
 BATCHSIZE = 1    # 批次数
 train_nan_loss=val_nan_loss=0
@@ -57,9 +63,9 @@ def train():
         logger.info(f"正在计算验证集原始参数指标")
         val_batches_pr=0
         psnr_epoch_pr=ssim_epoch_pr=0
-        for images,labels in val_dataloader:
-            psnr_batch_pr = psnr(images,labels)
-            ssim_batch_pr = ssim(images/255,labels/255)
+        for input,label in val_dataloader:
+            psnr_batch_pr = psnr(input,label)
+            ssim_batch_pr = ssim(input/255,label/255)
             psnr_epoch_pr += psnr_batch_pr
             ssim_epoch_pr += ssim_batch_pr
             val_batches_pr+=1
@@ -80,17 +86,17 @@ def train():
         loss_epoch =psnr_epoch=ssim_epoch= 0
         train_batches = 0  # 批次计数
         logger.info(f"第{epoch}轮训练开始，训练集开始训练")
-        for images, labels in train_dataloader:
+        for input, label in train_dataloader:
             # 每次迭代生成新的输入和输出
-            images, labels = images.to(device), labels.to(device)
+            input, label = input.to(device), label.to(device)
             optimizer_M.zero_grad()  # 梯度归零
             # 前向传播
             with autocast():
-                output = M(images)
-                labels=labels/255
-                loss_batch = loss_TOTAL(device, output, labels,input_max,input_min)             # 计算损失
-                psnr_batch= psnr(output.detach()*255,labels*255)                     # 计算训练集的PSNR
-                ssim_batch= ssim(output.detach(),labels)                     # 计算训练集的SSIM
+                output = M(input)
+                label=label/255
+                loss_batch = loss_TOTAL(device, L,M0,T0,P0,input,output,label,input_max,input_min)             # 计算损失
+                psnr_batch= psnr(output.detach()*255,label*255)                     # 计算训练集的PSNR
+                ssim_batch= ssim(output.detach(),label)                     # 计算训练集的SSIM
                 train_batches += 1
                 logger.info(f"epoch:{epoch},batch:{train_batches},\n loss:{loss_batch.item()} \n PSNR:{psnr_batch} \n SSIM:{ssim_batch}")
             if not torch.isnan(loss_batch):
@@ -101,7 +107,7 @@ def train():
                 psnr_epoch += psnr_batch         # 累加PSNR
                 ssim_epoch += ssim_batch         # 累加SSIM
             else:
-                show_image=images.cpu().clone()
+                show_image=input.cpu().clone()
                 show_image=show_image.squeeze(0)
                 show_image=transforms.ToPILImage()(show_image)
                 show_image.save(f"E:\\vscodeProject\\Githubcode\\OwnNet\\datasets\\NANpic\\{epoch}_{train_batches}.jpg")
@@ -124,15 +130,15 @@ def train():
         M.eval()
         val_batches=0
         with torch.no_grad():
-            for images, labels in val_dataloader:
-                images, labels = images.to(device), labels.to(device)
+            for input, label in val_dataloader:
+                input, label = input.to(device), label.to(device)
                 optimizer_M.zero_grad()  # 梯度归零
                 with autocast():
-                    output = M(images)
-                    labels=labels/255
-                    loss_batch = loss_TOTAL(device, output, labels)
-                    psnr_batch= psnr(output.detach()*255,labels*255)                     # 计算验证集的PSNR
-                    ssim_batch= ssim(output.detach(),labels)                     # 计算验证集的SSIM
+                    output = M(input)
+                    label=label/255
+                    loss_batch = loss_TOTAL(device, output, label)
+                    psnr_batch= psnr(output.detach()*255,label*255)                     # 计算验证集的PSNR
+                    ssim_batch= ssim(output.detach(),label)                     # 计算验证集的SSIM
                     val_batches += 1
                     logger.info(f"epoch:{epoch},batch:{val_batches},\n loss:{loss_batch.item()} \n PSNR:{psnr_batch} \n SSIM:{ssim_batch}")
 
