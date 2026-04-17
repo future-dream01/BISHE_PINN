@@ -125,12 +125,14 @@ def loss_criterion(device, output, label):
     loss = criterion(output, label)
     return loss
 
+def loss_PDE()
 # 总损失
 def loss_TOTAL(device, L,M0,T0,P0,input,output,label,input_max,input_min):
     mse_loss = loss_MSE(device, output, label)
     l1_loss = loss_L1(device, output, label)
     #criterion_loss=loss_criterion(device, output, label)
     PDE=RANS_PDE(L,M0,T0,P0,input,output,input_max,input_min)
+
     PDE_loss=PDE.rans_res()
     total_loss =0.4* mse_loss  + 0.2*l1_loss +0.4*
     return total_loss
@@ -337,5 +339,16 @@ class RANS_PDE():
                   (dK_dX*dOmega_dX+dK_dY*dOmega_dY+dK_dZ*dOmega_dZ)
         
         return Res_C,Res_MX,Res_MY,Res_MZ,Res_E,Res_K,Res_Omega
+
+    # 绝热壁面残差
+    def bon_res(self):
+        wall_points_id = self.d[:] < 1e-4
+        wall_points=self.d[wall_points_id]  # 壁面点
+        T=self.output[:,4:5]  # 无量纲静温
+        dT_dd=self.grad(T,wall_points)
+
+        return dT_dd
+        
+
 
 
