@@ -125,16 +125,36 @@ def loss_criterion(device, output, label):
     loss = criterion(output, label)
     return loss
 
-def loss_PDE()
+def loss_PDE(L,M0,T0,P0,input,output,input_max,input_min):
+    PDE=RANS_PDE(L,M0,T0,P0,input,output,input_max,input_min)
+    # 获取原始残差
+    res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega=PDE.rans_res()
+    # 残差计算MSE
+    loss_cont=torch.mean(res_cont**2)
+    loss_mom=torch.mean(res_mx**2+res_my**2+res_mz**2)
+    loss_energy=torch.mean(res_energy)
+    loss_k=torch.mean(res_k)
+    loss_omega=torch.mean(res_omega)
+    loss_pde=loss_cont+2*loss_mom+1.5*loss_energy+500*loss_k+700*loss_omega
+    return loss_pde
+
+def loss_Bondray(L,M0,T0,P0,input,output,input_max,input_min):
+    PDE=RANS_PDE(L,M0,T0,P0,input,output,input_max,input_min)
+    res_bon=PDE.bon_res()
+    loss_bon=torch.mean(res_bon**2)
+    return loss_bon
+    
 # 总损失
-def loss_TOTAL(device, L,M0,T0,P0,input,output,label,input_max,input_min):
+def loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output,label,input_max,input_min):
     mse_loss = loss_MSE(device, output, label)
     l1_loss = loss_L1(device, output, label)
-    #criterion_loss=loss_criterion(device, output, label)
-    PDE=RANS_PDE(L,M0,T0,P0,input,output,input_max,input_min)
-
-    PDE_loss=PDE.rans_res()
-    total_loss =0.4* mse_loss  + 0.2*l1_loss +0.4*
+    if epoch<PDEloss_start_epoch:
+        total_loss=mse_loss+l1_loss
+        return total_loss
+    else:
+        pde_loss=loss_PDE(L,M0,T0,P0,input,output,input_max,input_min)
+        bon_loss=loss_Bondray(L,M0,T0,P0,input,output,input_max,input_min)
+        total_loss =0.4* mse_loss+l1_loss*0.4+pde_loss+bon_loss
     return total_loss
 
 
@@ -159,9 +179,6 @@ def hard_consrain(input_d,output,output_sym):
     # 结果合并
     output=torch.cat([U, V, W, P, T, K, Omega], dim=1)
     return output
-
-
-
 
 
 # 残差损失

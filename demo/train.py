@@ -1,4 +1,4 @@
-1import os, sys
+import os, sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), './..'))
 sys.path.append(project_root)
 from model import PINN,data_prepare, loss_TOTAL,psnr,ssim,allgraph,hard_consrain
@@ -22,7 +22,8 @@ P0=47181   # 来流静压
 # 训练超参数设定
 EPOCHES = 300    # 轮次数
 BATCHSIZE = 1    # 批次数
-train_nan_loss=val_nan_loss=0
+PDEloss_start_epoch=50  # 开始加入PDE残差损失的轮次
+train_nan_loss=val_nan_loss=0  
 LOAD_CP=False     # 是否需要加载之前的检查点
 CP_PATH= f'{project_root}/outputs/weights/01-04_13-11/97weights.pth'    # 检查点权重文件绝对路径
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # 计算设备
@@ -41,13 +42,6 @@ def train():
     optimizer_M = optim.Adam(M.parameters(), lr=0.00005)    # 创建梯度优化器
     start_epoch=1 
     train_losses = []
-    train_psnrs = []
-    train_ssims = []
-    val_losses = []
-    val_psnrs = []
-    val_ssims = []
-    val_psnrs_pr=[]
-    val_ssims_pr=[]
     power_datas = []
 
     if LOAD_CP:                                 # 是否加载先前的检查点文件
@@ -56,13 +50,10 @@ def train():
         max_power_data=power_datas[start_epoch-1]
         d_epoch_num=start_epoch
         start_epoch+=1
-        psnr_epoch_pr=val_psnrs_pr[0]
-        ssim_epoch_pr=val_ssims_pr[0]
         logger.info(f"模型文件加载完成,最好powerdata指标:{max_power_data}")
     else:
         logger.info(f"正在计算验证集原始参数指标")
         val_batches_pr=0
-        psnr_epoch_pr=ssim_epoch_pr=0
         for input,label in val_dataloader:
             psnr_batch_pr = psnr(input,label)
             ssim_batch_pr = ssim(input/255,label/255)
@@ -83,7 +74,7 @@ def train():
 
         M.train()                       # 将模型转换为训练模式
         M.requires_grad_(True)          # 开启梯度，这是为了损失函数计算能用自动微分
-        loss_epoch =psnr_epoch=ssim_epoch= 0
+        loss_epoch=0
         train_batches = 0  # 批次计数
         logger.info(f"第{epoch}轮训练开始，训练集开始训练")
         for input, label in train_dataloader:
@@ -98,8 +89,8 @@ def train():
                 output_sym=M(input_sym)   # 输入对称后的输入
                 output=hard_consrain(input[:,3:4],output,output_sym) # 硬约束
                 label=label/255
-                loss_batch = loss_TOTAL(device, L,M0,T0,P0,input,output,label,input_max,input_min)             # 计算损失
-                psnr_batch= psnr(output.detach()*255,label*255)                     # 计算训练集的PSNR
+                loss_batch = loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output,label,input_max,input_min)             # 计算损失
+                psnr_batch= psnr(output.detach()*255,label*255)             # 计算训练集的PSNR
                 ssim_batch= ssim(output.detach(),label)                     # 计算训练集的SSIM
                 train_batches += 1
                 logger.info(f"epoch:{epoch},batch:{train_batches},\n loss:{loss_batch.item()} \n PSNR:{psnr_batch} \n SSIM:{ssim_batch}")
