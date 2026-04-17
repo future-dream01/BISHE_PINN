@@ -135,10 +135,37 @@ def loss_TOTAL(device, L,M0,T0,P0,input,output,label,input_max,input_min):
     total_loss =0.4* mse_loss  + 0.2*l1_loss +0.4*
     return total_loss
 
+
+
+# 硬约束函数
+def hard_consrain(input_d,output,output_sym):
+    # 对称面所有条件硬约束 分别构建偶函数和奇函数
+    U = 0.5 * (output[:, 0:1] + output_sym[:, 0:1])
+    V = 0.5 * (output[:, 1:2] + output_sym[:, 1:2])
+    W = 0.5 * (output[:, 2:3] - output_sym[:, 2:3])
+    P = 0.5 * (output[:, 3:4] + output_sym[:, 3:4])
+    T = 0.5 * (output[:, 4:5] + output_sym[:, 4:5])
+    k = 0.5 * (output[:, 5:6] + output_sym[:, 5:6])
+    Omega = 0.5 * (output[:, 6:7] + output_sym[:, 6:7])
+
+    # 壁面无滑移硬约束
+    U=input_d*U
+    V=input_d*V
+    W=input_d*W
+    K=input_d*K
+
+    # 结果合并
+    output=torch.cat([U, V, W, P, T, K, Omega], dim=1)
+    return output
+
+
+
+
+
 # 残差损失
 class RANS_PDE():
     def __init__(self,L,M0,T0,P0,input,output,input_max,input_min):  # (网络输出（无量纲化），网路输出（归一化），网络输入最大值，网络输入最小值)
-        # 无量纲化参数
+        # 无量纲化参数一、先明确两个概念的区别（避免混淆）
         self.L=L        # 特征长度
         self.M0=M0      # 来流马赫数
         self.T0=T0      # 来流静温
@@ -167,8 +194,11 @@ class RANS_PDE():
         self.input_max=input_max
         self.input_min=input_min
         self.output=output  # 无量纲输出 
-        self.input=((input + 1) / 2) * (self.input_max - self.input_min) + self.input_min  # 无量纲输入
+        self.input=self.input * (self.input_max - self.input_min + 1e-8) + self.input_min  # 反归一化到无量纲输入
         self.XYZ=self.input[:,0:3]   # 无量纲坐标xyz
+        self.X=self.input[:,0:1]     # 无量纲坐标x
+        self.Y=self.input[:,1:2]     # 无量纲坐标y
+        self.Z=self.input[:,2:3]     # 无量纲坐标z
         self.d=self.input[:,3:4]     # 无量纲壁面距离d
 
     # 求导函数
@@ -223,7 +253,7 @@ class RANS_PDE():
         # Rou*W关于z的导数
         grad_Rou_W=self.grad(Rou*W,self.XYZ)
         dRou_W_dZ=grad_Rou_W[:,2:3]
-  
+
         # P关于x、y、z的导数
         grad_P=self.grad(P,self.XYZ)
         dP_dX=grad_P[:,0:1]
@@ -253,16 +283,59 @@ class RANS_PDE():
         Res_C=dRou_U_dX+dRou_V_dY+dRou_W_dZ
 
         # x方向动量方程
-        Res_MX=Rou*(U*dU_dX+V*dV_dY+W*dW_dZ)+dP_dX-(1/self.Re0)*self.grad()
-
+        Res_MX=Rou*(U*dU_dX+V*dU_dY+W*dU_dZ)+dP_dX-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(2*dU_dX-(2/3)*(dU_dX+dV_dY+dW_dZ)),self.X)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dU_dY+dV_dX),self.Y)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dU_dZ+dW_dX),self.Z)
+        
+        # Y方向动量方程
+        Res_MY=Rou*(U*dV_dX+V*dV_dY+W*dV_dZ)+dP_dY-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dV_dX+dU_dY),self.X)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(2*dV_dY-(2/3)*(dU_dX+dV_dY+dW_dZ)),self.Y)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dV_dZ+dW_dY),self.Z)
+        
+        # Z方向动量方程
+        Res_MZ=Rou*(U*dW_dX+V*dW_dY+W*dW_dZ)+dP_dZ-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dW_dX+dU_dZ),self.X)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dW_dY+dV_dZ),self.Y)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(2*dW_dZ-(2/3)*(dU_dX+dV_dY+dW_dZ)),self.Z)
+        
         # 能量方程
         Omu=((dW_dY-dV_dZ)**2+(dU_dZ-dW_dX)**2+(dV_dX-dU_dY)**2)**0.5            # 涡量幅值
         arg2=torch.max((2*K**0.5)/(self.beta_star*Omega*self.d),(500)/(self.Re0*Rou*self.d**2*Omega))     # 混合函数F2
         F2=torch.tanh(arg2**2)
         Miu_t=(Rou*self.a1*K)/(self.Re0*(torch.max(self.a1*Omega,Omu*F2)))       # 湍流粘度
-        Phi=((Miu+Miu_t)/self.Re0)*(2*(dU_dX)**2+(dV_dY)**2+2*(dW_dZ)**2+(dU_dY+dV_dX)**2+(dU_dZ+dW_dX)**2+(dV_dZ+dW_dY)**2-(2/3)*(dU_dX+dV_dY+dW_dZ)**2)         # 耗散函数
-        Res_E=Rou*(U*(dT_dX)+V*(dT_dY)+W(dT_dZ))-(1/(self.Re0*self.Pr))*((self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dX)[:,0:1])+(self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dY)[:,1:2])+(self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dZ)[:,2:3]))-(self.gamma-1)*self.M0**2*(U*dP_dX+V*dP_dY+W*dP_dZ+Phi)
-
-
+        Phi=((Miu+Miu_t)/self.Re0)*(2*(dU_dX)**2+(dV_dY)**2+2*(dW_dZ)**2+\
+            (dU_dY+dV_dX)**2+(dU_dZ+dW_dX)**2+(dV_dZ+dW_dY)**2-(2/3)*(dU_dX+dV_dY+dW_dZ)**2)         # 耗散函数
+        Res_E=Rou*(U*(dT_dX)+V*(dT_dY)+W(dT_dZ))-\
+            (1/(self.Re0*self.Pr))*((self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dX,self.X))+\
+            (self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dY,self.Y))+\
+            (self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dZ,self.Z)))-\
+            (self.gamma-1)*self.M0**2*(U*dP_dX+V*dP_dY+W*dP_dZ+Phi)
+        
+        # 湍流动能K输运方程
+        CD_k_omega=torch.max(((2*Rou*self.sigma_omega2)/(Omega))*(dK_dX*dOmega_dX+dK_dY*dOmega_dY+dK_dZ*dOmega_dZ),(1e-20))
+        arg1=torch.min(torch.max((K**0.5)/(self.beta_star*Omega*self.d),(500)/(self.Re0*Rou*self.d**2*Omega)),(4*Rou*self.sigma_omega2*K)/(CD_k_omega*self.d**2))
+        F1=torch.tanh(arg1**4)
+        sigma_k=F1*(self.sigma_k1)+(1-F1)*self.sigma_k2
+        P_k=torch.min(Miu_t*self.Re0*(2*dU_dX**2+2*dV_dY**2+2*dW_dZ**2+(dV_dX+dU_dY)**2+(dU_dZ+dW_dX)**2+(dV_dZ+dW_dY)**2-(2/3)*(dU_dX+dV_dY+dW_dZ)**2),(20*self.beta_star*Rou*K*Omega))
+        Res_K=Rou(U*dK_dX+V*dK_dY+W*dK_dZ)-P_k+(self.beta_star*Rou*K*Omega)-\
+              (1/self.Re0)*(self.grad(((Miu+sigma_k*Miu_t)*dK_dX),self.X)+\
+              self.grad(((Miu+sigma_k*Miu_t)*dK_dY),self.Y)+\
+              self.grad(((Miu+sigma_k*Miu_t)*dK_dZ),self.Z))
+        
+        # 比耗散率Omega输运方程
+        sigma_omega=F1*self.sigma_omega1+(1-F1)*self.sigma_omega2
+        alpha=F1*self.alpha1+(1-F1)*self.alpha2
+        beta=F1*self.beta1+(1-F1)*self.beta2
+        Res_Omega=Rou*(U*dOmega_dX+V*dOmega_dY+W*dOmega_dZ)-alpha*((Rou*P_k*self.Re0)/(Miu_t))+\
+                  beta*Rou*Omega**2-((1/self.Re0)*\
+                  (self.grad((Miu+sigma_omega*Miu_t)*dOmega_dX,self.X))+\
+                  (self.grad((Miu+sigma_omega*Miu_t)*dOmega_dY,self.Y))+\
+                  (self.grad((Miu+sigma_omega*Miu_t)*dOmega_dZ,self.Z)))-\
+                  2*(1-F1)*((Rou*self.sigma_omega2)/(Omega))*\
+                  (dK_dX*dOmega_dX+dK_dY*dOmega_dY+dK_dZ*dOmega_dZ)
+        
+        return Res_C,Res_MX,Res_MY,Res_MZ,Res_E,Res_K,Res_Omega
 
 

@@ -25,8 +25,8 @@ class Train_Dataset(Dataset):
         self.input_min = self.inputs.min(axis=0)
         self.input_max = self.inputs.max(axis=0)
         
-        # 对输入进行归一化（缩到 [-1, 1]）
-        self.inputs_normalized = 2 * (self.inputs - self.input_min) / (self.input_max - self.input_min) - 1
+        # 0~1 归一化公式
+        self.inputs_normalized = (self.inputs - self.input_min) / (self.input_max - self.input_min + 1e-8)
 
     def __len__(self):
         return len(self.inputs)
@@ -56,8 +56,8 @@ class Val_Dataset(Dataset):
         self.inputs = df.iloc[:, :4].values.astype(np.float32)
         self.outputs = df.iloc[:, 4:].values.astype(np.float32)
         
-        # 归一化
-        self.inputs_normalized = 2 * (self.inputs - self.input_min) / (self.input_max - self.input_min) - 1
+        # 0~1 归一化公式
+        self.inputs_normalized = (self.inputs - self.input_min) / (self.input_max - self.input_min + 1e-8)
 
     def __len__(self):
         return len(self.inputs)

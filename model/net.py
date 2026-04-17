@@ -226,7 +226,8 @@ class Resn_Conv(nn.Module):
 class Backbone_Lin(nn.Mdule):
     def __init__(self):
         super(Backbone_Lin,self).__init__()
-        self.Tanh()=nn.Tanh()
+        self.silu()=nn.SiLU()
+        self.softplus()=nn.Softplus()
         self.Lin1=nn.Linear(4,64)
         self.Lin2=nn.Linear(64,128)
         self.Lin3=nn.Linear(128,256)
@@ -237,27 +238,31 @@ class Backbone_Lin(nn.Mdule):
         self.Lin6=nn.Linear(64,7)
     def forward(self,x):
         x=self.Lin1(x)
-        x=self.Tanh(x)
+        x=self.silu(x)
         x=self.Lin2(x)
-        x=self.Tanh(x)
+        x=self.silu(x)
         x=self.Lin3(x)
-        x=self.Tanh(x)
+        x=self.silu(x)
         x=self.res1(x)
         x=self.res2(x)
         x=self.Lin4(x)
-        x=self.Tanh(x)
+        x=self.silu(x)
         x=self.Lin5(x)
-        x=self.Tanh(x)
+        x=self.silu(x)
         x=self.Lin6(x)
-        out=self.Tanh(x)
-        return out
+        # 最后一层，uvw保持线性输出，其他物理量使用softplus激活函数保证输出为正
+        x[:,3:4]=self.softplus(x[:,3:4])   # P
+        x[:,4:5]=self.softplus(x[:,4:5])   # T
+        x[:,5:6]=self.softplus(x[:,5:6])   # K
+        x[:,6:7]=self.softplus(x[:,6:7])   # Omega
+        return x
 
 
 # 残差全连接模块
 class Resn_Lin(nn.Module):
     def __init__(self,input_channel,output_channel):
         super(Resn_Lin,self).__init__()
-        self.Tanh=nn.Tanh()  
+        self.silu=nn.SiLU()  
         self.lin1=nn.Linear(input_channel,256)
         self.lin2=nn.Linear(256,256)
         self.lin3=nn.Linear(256,256)
@@ -265,14 +270,14 @@ class Resn_Lin(nn.Module):
 
     def forward(self,x):
         base=self.lin1(x)
-        x=self.Tanh(x)
+        x=self.silu(x)
         x=self.lin2(x)
-        x=self.Tanh(x)
+        x=self.silu(x)
         x=self.lin3(x)
-        x=self.Tanh(x)
+        x=self.silu(x)
         x=self.lin4(x)
-        x=self.Tanh(x)
+        x=self.silu(x)
         out=x+base
-        out=self.Tanh(out)
+        out=self.silu(out)
         return out
 

@@ -14,7 +14,6 @@ class PINN(nn.Module):
 
     def forward(self,x):
         self.out=self.backbone(x)
-        # 反归一化
-        self.out=((self.out+1)*(self.input_max-self.input_min))/2+self.input_min
-        # 返回计算损失函数
+        # 适配 0~1 归一化的反归一化公式
+        self.out = self.out * (self.input_max - self.input_min + 1e-8) + self.input_min # 返回网络的最终的无量纲输出
         return self.out

@@ -1,7 +1,7 @@
 import os, sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), './..'))
 sys.path.append(project_root)
-from model import PINN,data_prepare, loss_TOTAL,psnr,ssim,allgraph
+from model import PINN,data_prepare, loss_TOTAL,psnr,ssim,allgraph,hard_consrain
 import torch.optim as optim
 from loguru import logger
 from datetime import datetime
@@ -93,6 +93,10 @@ def train():
             # 前向传播
             with autocast():
                 output = M(input)
+                input_sym=input.clone()   # 构造
+                input_sym[:,2:3]=-input_sym[:,2:3]
+                output_sym=M(input_sym)   # 输入对称后的输入
+                output=hard_consrain(input[:,3:4],output,output_sym) # 硬约束
                 label=label/255
                 loss_batch = loss_TOTAL(device, L,M0,T0,P0,input,output,label,input_max,input_min)             # 计算损失
                 psnr_batch= psnr(output.detach()*255,label*255)                     # 计算训练集的PSNR
