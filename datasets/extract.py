@@ -5,7 +5,7 @@ import os
 import matplotlib.pyplot as plt
 
 # ==========================================
-# 【参数设置区域】请在此处修改配置
+# 【参数设置区域】
 # ==========================================
 # --- 通用文件与物理参数 ---
 cas_path = "066D_A3_hermites08_banmo_042_101.cas"
@@ -19,26 +19,20 @@ Rou0 = P0 / (287 * T0)
 
 # --- 训练集参数 (Train) ---
 output_train_csv = "066D_A3_train.csv"
-# 强制包含的进/出口坐标
 x_inlet = 0.297183
 x_outlet = 0.515712
-# 进/出口截面【单独】采样数设置
 samples_inlet = 5000
 samples_outlet = 5000
-# 三个区域的截面数 (不含强制的进/出口，程序会自动补上)
 N1_train = 5    # 0.297183 ~ 0.34
 N2_train = 15   # 0.34 ~ 0.47
 N3_train = 5    # 0.47 ~ 0.515712
-# 训练集【普通截面】采样参数
 samples_train_section = 2000
 near_wall_ratio_train = 0.7
 near_wall_thresh_train = 0.005
 
 # --- 验证集参数 (Validation) ---
 output_val_csv = "066D_A3_val.csv"
-# 【关键】在此处指定验证集的任意X坐标列表
 val_x_sections = [0.31, 0.38, 0.42, 0.49] 
-# 验证集采样参数
 samples_val_section = 2000
 near_wall_ratio_val = 0.5
 near_wall_thresh_val = 0.005
@@ -47,10 +41,75 @@ near_wall_thresh_val = 0.005
 # 【核心函数区域】
 # ==========================================
 
+# 【新增】提取整个流体域所有点的全局极值（用于CSV表头）
+def get_global_stats(target_block, L, U0, T0, P0, Rou0):
+    """
+    读取整个流体域的所有网格点，计算所有变量的全局MIN/MAX
+    返回：包含MIN和MAX的两个字典，以及列名列表
+    """
+    print("\n正在提取整个进气道流域的全局极值（所有网格点）...")
+    # 确保数据在节点上
+    data = target_block.point_data_to_cell_data(True).cell_data_to_point_data()
+    
+    # 对整个流场做无量纲化（和采样函数逻辑完全一致）
+    full_df = pd.DataFrame({
+        "X": (data.points[:, 0])/L,
+        "Y": (data.points[:, 1])/L,
+        "Z": (data.points[:, 2])/L,
+        "壁面距离": (data["WALL_DIST"])/L,
+        "U": (data["X_VELOCITY"])/U0,
+        "V": (data["Y_VELOCITY"])/U0,
+        "W": (data["Z_VELOCITY"])/U0,
+        "静压": ((data["PRESSURE"])-P0)/(Rou0*U0*U0),
+        "静温": (data["TEMPERATURE"])/T0,
+        "湍流动能": (data["TKE"])/(U0*U0),
+        "比耗散率": (data["SDR"])*(L/U0),
+    })
+    
+    # 计算全局MIN和MAX
+    global_min = full_df.min().to_dict()
+    global_max = full_df.max().to_dict()
+    
+    print("✅ 全局极值提取完成：")
+    for col in full_df.columns:
+        print(f"   {col:8s} | MIN: {global_min[col]:.6f} | MAX: {global_max[col]:.6f}")
+    
+    return global_min, global_max, full_df.columns.tolist()
+
+# 【新增】带全局极值头的CSV保存函数
+def save_csv_with_header(df, file_path, global_min, global_max, columns):
+    """
+    保存CSV：
+    第1行：原始表头
+    第2行：全局MIN
+    第3行：全局MAX
+    第4行起：采样数据
+    """
+    # 构造MIN/MAX行
+    min_row = pd.DataFrame([global_min], columns=columns)
+    max_row = pd.DataFrame([global_max], columns=columns)
+    
+    # 拼接：MIN -> MAX -> 采样数据
+    final_df = pd.concat([min_row, max_row, df], ignore_index=True)
+    
+    # 保存（注意：此时第0行是MIN，第1行是MAX，第2行起是数据，但表头依然是正确的）
+    # 为了让第1行视觉上是表头，我们手动写入
+    with open(file_path, 'w', encoding='utf-8-sig', newline='') as f:
+        # 1. 写入表头
+        f.write(','.join(columns) + '\n')
+        # 2. 写入MIN行（标记一下方便识别，或者直接写数值）
+        min_vals = [f"{global_min[col]:.10f}" for col in columns]
+        f.write(','.join(min_vals) + '\n')
+        # 3. 写入MAX行
+        max_vals = [f"{global_max[col]:.10f}" for col in columns]
+        f.write(','.join(max_vals) + '\n')
+        # 4. 写入采样数据
+        df.to_csv(f, header=False, index=False, float_format='%.10f')
+    
+    print(f"✅ 文件已保存：{file_path}")
+    print(f"   格式：第1行=表头 | 第2行=全局MIN | 第3行=全局MAX | 第4行起=数据")
+
 def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio, L, U0, T0, P0, Rou0):
-    """
-    分层采样函数（为了通用性，将物理常数作为参数传入）
-    """
     df = pd.DataFrame({
         "X": (slice_data.points[:, 0])/L,
         "Y": (slice_data.points[:, 1])/L,
@@ -78,7 +137,6 @@ def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio, L, U
     return sampled_df
 
 def visualize_sampling_points(slice_points, sampled_points, x_pos, set_name=""):
-    """可视化函数（增加了set_name参数区分训练/验证）"""
     plt.figure(figsize=(9, 8))
     plt.scatter(slice_points[:, 1], slice_points[:, 2], c="lightgray", s=4, alpha=0.3, label="原始所有点")
     plt.scatter(sampled_points["Y"], sampled_points["Z"], c="crimson", s=6, alpha=0.9, label="采样点")
@@ -94,15 +152,11 @@ def visualize_sampling_points(slice_points, sampled_points, x_pos, set_name=""):
     plt.show()
 
 def check_overlap(train_x, val_x, tol=1e-6):
-    """
-    检查验证集坐标是否与训练集重合
-    """
     print("\n" + "="*70)
     print("正在验证坐标重合情况...")
     
     overlap_coords = []
     for vx in val_x:
-        # 计算与所有训练集坐标的最小距离
         min_dist = np.min(np.abs(np.array(train_x) - vx))
         if min_dist < tol:
             overlap_coords.append(vx)
@@ -119,35 +173,25 @@ def check_overlap(train_x, val_x, tol=1e-6):
 
 def process_sections(target_block, x_list, sample_counts, near_thresh, near_ratio, 
                      L, U0, T0, P0, Rou0, set_name=""):
-    """
-    通用处理流程：处理一组截面，返回DataFrame
-    """
     all_data = []
     far_ratio = 1 - near_ratio
     
     for idx, x_pos in enumerate(x_list):
         print(f"\n[{set_name}] 处理第 {idx+1}/{len(x_list)} 个截面 X = {x_pos:.6f}")
         
-        # 切片
         slice_plane = target_block.slice(normal=[1,0,0], origin=[x_pos, 0, 0])
         if slice_plane.n_points == 0:
             print(f"   跳过：无数据")
             continue
         
-        # 数据格式统一
         slice_plane = slice_plane.point_data_to_cell_data(True).cell_data_to_point_data()
-        
-        # 获取当前截面的采样数
         current_samples = sample_counts[idx]
         
-        # 采样
         sampled_df = stratified_sampling(slice_plane, near_thresh, current_samples, near_ratio,
                                           L, U0, T0, P0, Rou0)
-        
+
         all_data.append(sampled_df)
         print(f"   完成：实际采样 {len(sampled_df)} 点")
-        
-        # 可视化
         visualize_sampling_points(slice_plane.points, sampled_df, x_pos, set_name)
         
     if not all_data:
@@ -168,21 +212,21 @@ def main():
         return
     print(f"✅ 已加载流体域 Zone {zone_id}")
 
-    # ==========================================
+    # 【关键步骤1：训练前提取整个流场的全局极值】
+    # 注意：训练集和验证集使用【同一套】全局极值，保证归一化基准一致
+    global_min, global_max, columns = get_global_stats(target_block, L, U0, T0, P0, Rou0)
+
     # 2. 准备训练集截面坐标
-    # ==========================================
     print("\n正在生成训练集截面...")
-    # 生成三个区域的内部截面
-    s1 = np.linspace(x_inlet, 0.34, N1_train + 2)[1:-1] # 去掉首尾（首尾是进/出口）
+    s1 = np.linspace(x_inlet, 0.34, N1_train + 2)[1:-1]
     s2 = np.linspace(0.34, 0.47, N2_train)
     s3 = np.linspace(0.47, x_outlet, N3_train + 2)[1:-1]
     
-    # 合并并强制加入进/出口
     train_x_raw = np.concatenate([[x_inlet], s1, s2, s3, [x_outlet]])
-    train_x_raw = np.unique(train_x_raw) # 去重
-    train_x = np.sort(train_x_raw)       # 排序
+    train_x_raw = np.unique(train_x_raw)
+    train_x = np.sort(train_x_raw)
     
-    # 生成训练集对应的采样数列表
+    # 训练集采样数列表
     train_sample_counts = []
     for x in train_x:
         if abs(x - x_inlet) < 1e-8:
@@ -193,25 +237,17 @@ def main():
             train_sample_counts.append(samples_train_section)
 
     print(f"训练集共 {len(train_x)} 个截面")
-    print(f"   包含强制入口 X={x_inlet} (采样{samples_inlet})")
-    print(f"   包含强制出口 X={x_outlet} (采样{samples_outlet})")
 
-    # ==========================================
     # 3. 准备验证集截面坐标
-    # ==========================================
     val_x = np.array(val_x_sections)
     val_x = np.sort(val_x)
     val_sample_counts = [samples_val_section] * len(val_x)
     print(f"\n验证集共 {len(val_x)} 个指定截面")
 
-    # ==========================================
     # 4. 重合性检查
-    # ==========================================
     check_overlap(train_x, val_x)
 
-    # ==========================================
     # 5. 处理训练集
-    # ==========================================
     print("\n" + "="*70)
     print("开始处理【训练集】")
     print("="*70)
@@ -222,13 +258,11 @@ def main():
     )
     
     if not df_train.empty:
-        df_train.to_csv(output_train_csv, index=False, encoding="utf-8-sig")
-        print(f"\n✅ 训练集保存至：{output_train_csv}")
-        print(f"   总点数：{len(df_train)}")
+        # 【关键修改】使用新的保存函数，带上全局极值头
+        save_csv_with_header(df_train, output_train_csv, global_min, global_max, columns)
+        print(f"   训练集采样点数：{len(df_train)}")
 
-    # ==========================================
     # 6. 处理验证集
-    # ==========================================
     print("\n" + "="*70)
     print("开始处理【验证集】")
     print("="*70)
@@ -239,12 +273,13 @@ def main():
     )
     
     if not df_val.empty:
-        df_val.to_csv(output_val_csv, index=False, encoding="utf-8-sig")
-        print(f"\n✅ 验证集保存至：{output_val_csv}")
-        print(f"   总点数：{len(df_val)}")
+        # 【关键修改】验证集也使用【同一套】全局极值
+        save_csv_with_header(df_val, output_val_csv, global_min, global_max, columns)
+        print(f"   验证集采样点数：{len(df_val)}")
 
     print("\n" + "="*70)
     print("所有任务完成！")
+    print("重要提示：训练集和验证集使用了完全相同的全局极值（来自整个流场），保证归一化一致性。")
     print("="*70)
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ sys.path.append(project_root)
 def allgraph(current_datetime,epoches,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses):
     # 训练集损失曲线
     plt.figure(figsize=(20, 15))
-    plt.subplot(3, 3, 1)
+    plt.subplot(1, 3, 1)
     plt.plot(epoches, train_losses, 'b', label='loss')
     plt.title('Training set Loss over Epochs')
     plt.xlabel('Epochs')    
@@ -17,53 +17,28 @@ def allgraph(current_datetime,epoches,train_losses,res_cont_epoches,res_mx_epoch
     plt.legend()
 
     # 训练集连续方程残差
-    plt.subplot(3, 3, 2)
-    plt.plot(epoches, res_cont_epoches, 'b', label='PSNR')
-    plt.title('Training set PSNR over Epochs')
-    plt.xlabel('Epochs')    
-    plt.ylabel('PSNR')
-    plt.legend()
+    plt.subplot(1, 3, 2)
+    plt.plot(epoches, res_cont_epoches, 'b-', label='Res Cont', linewidth=2)    # 连续方程
+    plt.plot(epoches, res_mx_epoches, 'r-', label='Res Mx', linewidth=2)        # x动量
+    plt.plot(epoches, res_my_epoches, 'g-', label='Res My', linewidth=2)        # y动量
+    plt.plot(epoches, res_mz_epoches, 'y-', label='Res Mz', linewidth=2)        # z动量
+    plt.plot(epoches, res_energy_epoches, 'm-', label='Res Energy', linewidth=2)# 能量方程
+    plt.plot(epoches, res_k_epoches, 'c-', label='Res K', linewidth=2)          # k输运方程
+    plt.plot(epoches, res_omega_epoches, 'k-', label='Res Omega', linewidth=2)  # omega输运方程
+
+    plt.title('Training Set All 7 Residuals ')
+    plt.xlabel('Epochs')
+    plt.ylabel('Residual Value')
+    plt.legend()          # 显示图例（必须有）
+    plt.grid(alpha=0.3)   # 加网格更清晰
     
-    # 训练集
-    plt.subplot(3, 3, 3)
-    plt.plot(epoches, train_ssims, 'b', label='SSIM')
-    plt.title('Training set SSIM over Epochs')
-    plt.xlabel('Epochs')    
-    plt.ylabel('SSIM')
-    plt.legend()
-
-    # 验证集损失曲线
-    plt.subplot(3, 3, 4)
-    plt.plot(epoches, val_losses, 'r', label='loss')
-    plt.title('Verification set loss over Epochs')
-    plt.xlabel('Epochs')    
-    plt.ylabel('Loss')
-    plt.legend()
-
-    # 验证集PSNR曲线
-    plt.subplot(3, 3, 5)
-    plt.plot(epoches, val_psnrs, 'r', label='PSNR')
-    plt.plot(epoches, val_psnrs_pr, 'y', label='PSNR_pr')
-    plt.title('Verification set PSNR over Epochs')
-    plt.xlabel('Epochs')    
-    plt.ylabel('PSNR')
-    plt.legend()
-
-    # 验证集SSIM曲线
-    plt.subplot(3, 3, 6)
-    plt.plot(epoches, val_ssims, 'r', label='SSIM')
-    plt.plot(epoches, val_ssims_pr, 'y', label='SSIM_pr')
-    plt.title('Verification set SSIM over Epochs')
-    plt.xlabel('Epochs')    
-    plt.ylabel('SSIM')
-    plt.legend()
 
     # 效果值power_data曲线
-    plt.subplot(3, 3, 8)
-    plt.plot(epoches, power_datas, 'g', label='power_data')
-    plt.title('Verification set powerdata over Epochs')
+    plt.subplot(1, 3, 3)
+    plt.plot(epoches, val_losses, 'g', label='power_data')
+    plt.title('Verification set loss over Epochs')
     plt.xlabel('Epochs')    
-    plt.ylabel('Power_data')
+    plt.ylabel('Verification Loss')
     plt.legend()
 
     plt.savefig(f'{project_root}/outputs/训练与性能情况/{current_datetime}/参数曲线.png')  # 保存训练损失图像

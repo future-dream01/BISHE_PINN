@@ -368,6 +368,5 @@ class RANS_PDE():
         wall_points=self.d[wall_points_id]  # 壁面点
         T=self.output[:,4:5]  # 无量纲静温
         dT_dd=self.grad(T,wall_points)
-
         return dT_dd
         

@@ -23,7 +23,7 @@ P0=47181   # 来流静压
 EPOCHES = 300    # 轮次数
 BATCHSIZE = 1024    # 批次数
 PDEloss_start_epoch=20  # 开始加入PDE残差损失的轮次
-train_nan_loss=val_nan_loss=0  
+train_nan_loss=val_nan_loss=0   # 一轮中出现异常损失值的批次数量
 LOAD_CP=False     # 是否需要加载之前的检查点
 CP_PATH= f'{project_root}/outputs/weights/01-04_13-11/97weights.pth'    # 检查点权重文件绝对路径
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # 计算设备
@@ -34,44 +34,33 @@ os.makedirs(f'{project_root}/outputs/weights/{current_datetime}', exist_ok=True)
 logger.add(log_file_path,rotation="50000 MB",level="INFO")               #创建日志文件
 
 def train():
-    # 训练配置
-    global train_nan_loss,val_nan_loss
+    # 训练前备工作
+    global train_nan_loss,val_nan_loss      
     train_dataloader, val_dataloader ,input_min ,input_max= data_prepare(BATCHSIZE)        # 创建数据加载器对象
-    M = PINN()                           # 创建模型对象
+    M = PINN()                                  # 创建模型对象
     M.to(device)                                # 将模型转移到计算设备上
     optimizer_M = optim.Adam(M.parameters(), lr=0.00005)    # 创建梯度优化器
-    start_epoch=1 
-    train_losses = []  # 训练集损失
-    res_cont_epoches=[]
-    res_mx_epoches=[]
-    res_my_epoches=[]
-    res_mz_epoches=[]
-    res_energy_epoches=[]
-    res_k_epoches=[]
-    res_omega_epoches=[]
-    val_losses=[]      # 验证集损失
+    start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数
+    train_losses = []                           # 训练集损失
+    res_cont_epoches=[]                         # 训练集连续方程残差
+    res_mx_epoches=[]                           # 训练集x方向动量方程残差
+    res_my_epoches=[]                           # 训练集y方向动量方程残差
+    res_mz_epoches=[]                           # 训练集z方向动量方程残差
+    res_energy_epoches=[]                       # 训练集能量方程残差
+    res_k_epoches=[]                            # 训练集湍流动能输运方程残差
+    res_omega_epoches=[]                        # 训练集湍流比耗散率输方程残差
+    val_losses=[]                               # 验证集损失
 
-
-    if LOAD_CP:                                 # 是否加载先前的检查点文件
+    # 是否加载先前的检查点文件
+    if LOAD_CP:                                
         logger.info(f"正在加载模型文件")
         M,optimizer_M,start_epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses=load_checkpoint(M,optimizer_M,CP_PATH)
         min_val_loss=val_losses[start_epoch-1]
         d_epoch_num=start_epoch
         start_epoch+=1
         logger.info(f"模型文件加载完成,最低的验证集损失:{min_val_loss}")
-    # else:
-    #     logger.info(f"正在计算验证集原始参数指标")
-    #     val_batches_pr=0
-    #     for input,label in val_dataloader:
-    #         psnr_batch_pr = psnr(input,label)
-    #         ssim_batch_pr = ssim(input/255,label/255)
-    #         psnr_epoch_pr += psnr_batch_pr
-    #         ssim_epoch_pr += ssim_batch_pr
-    #         val_batches_pr+=1
-    #     psnr_epoch_pr=psnr_epoch_pr/val_batches_pr
-    #     ssim_epoch_pr=ssim_epoch_pr/val_batches_pr
-    #     logger.info(f"验证集原始参数指标计算完成,原始平均PSNR:{psnr_epoch_pr},原始平均SSIM:{ssim_epoch_pr}")
 
+    # 开启混合精度
     scaler=GradScaler(device)
     logger.info("开始训练")
 
@@ -79,7 +68,6 @@ def train():
     for epoch in range(int(start_epoch), EPOCHES + 1):
 
         ###################### 训练集训练 #########################
-
         M.train()                       # 将模型转换为训练模式
         M.requires_grad_(True)          # 开启梯度，这是为了损失函数计算能用自动微分
         train_loss_epoch=0
@@ -90,7 +78,7 @@ def train():
         res_energy_epoch=0
         res_k_epoch=0
         res_omega_epoch=0
-        train_batches = 0  # 批次计数
+        train_batches = 0               # 批次计数
         logger.info(f"第{epoch}轮训练开始，训练集开始训练")
         for input, label in train_dataloader:
             # 每次迭代生成新的输入和输出
@@ -99,11 +87,12 @@ def train():
             # 前向传播
             with autocast(device_type=device):
                 output = M(input)
-                input_sym=input.clone()   # 构造
+                input_sym=input.clone()                              # 构造对称输入
                 input_sym[:,2:3]=-input_sym[:,2:3]
-                output_sym=M(input_sym)   # 输入对称后的输入
+                output_sym=M(input_sym)                              # 输入对称后的输入
                 output=hard_consrain(input[:,3:4],output,output_sym) # 硬约束
                 loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output,label,input_max,input_min)  # 计算损失
+
                 # 数据接收
                 train_loss_batch=loss[0]
                 res_cont_batch=loss[1]
@@ -113,32 +102,33 @@ def train():
                 res_energy_batch=loss[5]
                 res_k_batch=loss[6]
                 res_omega_batch=loss[7]
-                train_batches += 1
 
-                # 每批次迭代训练参数打印
+                train_batches += 1  # 本轮次已迭代的批次总数更新
+                # 每批次训练参数打印
                 logger.info(f"epoch:{epoch},batch:{train_batches},\n loss:{train_loss_batch.item()} \n \
-                    Res_cont:{res_cont_batch} \n Res_mx:{res_mx_batch} \n Res_my:{res_my_batch}\
-                    \n Res_mz:{res_mz_batch} \n Res_energy:{res_energy_batch} \
-                    \n Res_k:{res_k_batch} \n Res_omega:{res_omega_batch}")
+                    Res_cont:{res_cont_batch.item()} \n Res_mx:{res_mx_batch.item()} \n Res_my:{res_my_batch.item()}\
+                    \n Res_mz:{res_mz_batch.item()} \n Res_energy:{res_energy_batch.item()} \
+                    \n Res_k:{res_k_batch.item()} \n Res_omega:{res_omega_batch.item()}")
+                
             if not torch.isnan(train_loss_batch):
                 scaler.scale(train_loss_batch).backward()      # 反向传播
-                scaler.step(optimizer_M)                 # 梯度下降
+                scaler.step(optimizer_M)                       # 梯度下降
                 scaler.update()
+
                 # 累加每轮当中的训练参数
                 train_loss_epoch += train_loss_batch.item()  
-                res_cont_epoch+=res_cont_batch
-                res_mx_epoch+=res_mx_batch
-                res_my_epoch+=res_my_batch
-                res_mz_epoch+=res_mz_batch
-                res_energy_epoch+=res_energy_batch
-                res_k_epoch+=res_k_batch
-                res_omega_epoch+=res_omega_batch
-
+                res_cont_epoch+=res_cont_batch.item()  
+                res_mx_epoch+=res_mx_batch.item()  
+                res_my_epoch+=res_my_batch.item()  
+                res_mz_epoch+=res_mz_batch.item()  
+                res_energy_epoch+=res_energy_batch.item()  
+                res_k_epoch+=res_k_batch.item()  
+                res_omega_epoch+=res_omega_batch.item()  
             else:
                 train_nan_loss +=1
                 logger.info("此批次损失计算出现NAN,已舍弃此损失值,不对此批次反向传播")
                 continue
-        
+
         # 计算每轮平均训练参数
         train_loss_epoch = train_loss_epoch / (train_batches-train_nan_loss)  # 本epoch平均损失
         res_cont_epoch=res_cont_epoch/ (train_batches-train_nan_loss)
@@ -160,7 +150,7 @@ def train():
         res_omega_epoches.append(res_omega_epoch)
 
         # 训练参数打印
-        logger.info(f"epoch:{epoch},\n loss_average:{train_loss_epoch.item()} \n \
+        logger.info(f"epoch:{epoch},\n loss_average:{train_loss_epoch} \n \
                     Res_cont_average:{res_cont_epoch} \n Res_mx_average:{res_mx_epoch} \n Res_my_average:{res_my_epoch}\
                     \n Res_mz_average:{res_mz_epoch} \n Res_energy_average:{res_energy_epoch} \
                     \n Res_k_average:{res_k_epoch} \n Res_omega_average:{res_omega_epoch}")
@@ -170,7 +160,6 @@ def train():
             res_energy_epoch=res_k_epoch=res_omega_epoch=0
         
         ########################## 验证集评估 #################################
-
         logger.info(f"第{epoch}轮训练集训练完成,开始验证集校验工作")
         M.eval()
         val_batches=val_loss_epoch = 0
@@ -185,25 +174,10 @@ def train():
                     output_sym=M(input_sym)   # 输入对称后的输入
                     output=hard_consrain(input[:,3:4],output,output_sym) # 硬约束
                     val_loss_batch = val_loss_TOTAL(device, output, label)  # 计算验证集损失
-                    val_batches += 1
+
+                    val_batches += 1  # 本轮验证集已经迭代的批次数
                     # 打印验证集参数
                     logger.info(f"epoch:{epoch},batch:{val_batches},\n loss:{val_loss_batch.item()} ")
-
-                    # if val_batches==1:
-                    #     output = output.squeeze().cpu().numpy()
-                    #     #logger.info(f"推理结果: {output}")
-                        
-                    #     # 将输出的128x128灰度图截取图像紧贴右侧边界的121x115像素大小的区域
-                    #     cropped_output = output[:, -121:]  # 截取右侧121列
-                    #     cropped_output = cropped_output[6:121-6, :]  # 上下对称截取115行
-                        
-                    #     # 将结果放大到128x128
-                    #     cropped_image = Image.fromarray((cropped_output * 255).astype(np.uint8), mode='L')
-                    #     resized_image = cropped_image.resize((128, 128), Image.BILINEAR)
-                        
-                    #     output_image_path = f'{project_root}/outputs/训练与性能情况/{current_datetime}/第{epoch}轮结果图片.png'
-                    #     os.makedirs(os.path.dirname(output_image_path), exist_ok=True)
-                    #     resized_image.save(output_image_path)
                 if not torch.isnan(val_loss_batch):
                     val_loss_epoch += val_loss_batch.item()  # 累加损失
                 else:
@@ -219,12 +193,11 @@ def train():
         val_nan_loss=0
 
         ##################### 决定是否保存当前轮次 ###############################
-
         logger.info(f"第{epoch}轮验证集评估完成，开始判断是否保存本轮权重")
         if (epoch==start_epoch)and LOAD_CP==False:
             save_checkpoint(M,optimizer_M,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
             logger.info(f"第一轮权重已保存")
-            min_val_loss= val_loss_epoch            # 初始化最大效果值
+            min_val_loss= val_loss_epoch            # 初始化最小的验证集损失
             d_epoch_num = start_epoch             # 初始化效果最好的轮次数
         if (epoch==EPOCHES):
             save_checkpoint(M,optimizer_M,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
@@ -236,7 +209,7 @@ def train():
                     os.remove(delpath)
                     logger.info(f"删除了先前的第{d_epoch_num}轮权重")
                 d_epoch_num=epoch                 # 更新效果最好的轮次数
-                min_val_loss= val_loss_epoch        # 更新最好的效果值
+                min_val_loss= val_loss_epoch        # 更新最小的验证集
                 
                 save_checkpoint(M,optimizer_M,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses,  f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
                 logger.info(f"保存了当前的第{d_epoch_num}轮权重,最好效果为{min_val_loss}")
@@ -244,13 +217,11 @@ def train():
                 logger.info("不保存此轮权重")
 
         ################### 绘图 ############################ 
-               
         logger.info("开始绘图")
         epochs = range(1, len(val_losses) + 1)
         allgraph(current_datetime, epochs,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses)
         logger.info("绘图完成")
         logger.info(f"第{epoch}轮训练全部完成")
-
     logger.info("训练全部完成")
 
 # 保存模型权重
