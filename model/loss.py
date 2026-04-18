@@ -136,7 +136,7 @@ def loss_PDE(L,M0,T0,P0,input,output,input_max,input_min):
     loss_k=torch.mean(res_k)
     loss_omega=torch.mean(res_omega)
     loss_pde=loss_cont+2*loss_mom+1.5*loss_energy+500*loss_k+700*loss_omega
-    return loss_pde
+    return loss_pde,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega
 
 def loss_Bondray(L,M0,T0,P0,input,output,input_max,input_min):
     PDE=RANS_PDE(L,M0,T0,P0,input,output,input_max,input_min)
@@ -144,20 +144,25 @@ def loss_Bondray(L,M0,T0,P0,input,output,input_max,input_min):
     loss_bon=torch.mean(res_bon**2)
     return loss_bon
     
-# 总损失
-def loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output,label,input_max,input_min):
+# 训练集总损失
+def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output,label,input_max,input_min):
     mse_loss = loss_MSE(device, output, label)
     l1_loss = loss_L1(device, output, label)
+    pde_loss,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega=loss_PDE(L,M0,T0,P0,input,output,input_max,input_min)
     if epoch<PDEloss_start_epoch:
         total_loss=mse_loss+l1_loss
-        return total_loss
+        return total_loss,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega
     else:
-        pde_loss=loss_PDE(L,M0,T0,P0,input,output,input_max,input_min)
         bon_loss=loss_Bondray(L,M0,T0,P0,input,output,input_max,input_min)
         total_loss =0.4* mse_loss+l1_loss*0.4+pde_loss+bon_loss
+        return total_loss,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega
+
+# 验证集总损失
+def val_loss_TOTAL(device,output,label):
+    mse_loss = loss_MSE(device, output, label)
+    l1_loss = loss_L1(device, output, label)
+    total_loss=mse_loss+l1_loss
     return total_loss
-
-
 
 # 硬约束函数
 def hard_consrain(input_d,output,output_sym):
@@ -366,6 +371,3 @@ class RANS_PDE():
 
         return dT_dd
         
-
-
-

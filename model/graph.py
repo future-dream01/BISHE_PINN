@@ -6,7 +6,7 @@ sys.path.append(project_root)
 
 
 
-def allgraph(current_datetime,epoches,train_losses,train_psnrs,train_ssims,val_losses,val_psnrs,val_ssims,val_psnrs_pr,val_ssims_pr,power_datas):
+def allgraph(current_datetime,epoches,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses):
     # 训练集损失曲线
     plt.figure(figsize=(20, 15))
     plt.subplot(3, 3, 1)
@@ -16,15 +16,15 @@ def allgraph(current_datetime,epoches,train_losses,train_psnrs,train_ssims,val_l
     plt.ylabel('Loss')
     plt.legend()
 
-    # 训练集PSNR曲线
+    # 训练集连续方程残差
     plt.subplot(3, 3, 2)
-    plt.plot(epoches, train_psnrs, 'b', label='PSNR')
+    plt.plot(epoches, res_cont_epoches, 'b', label='PSNR')
     plt.title('Training set PSNR over Epochs')
     plt.xlabel('Epochs')    
     plt.ylabel('PSNR')
     plt.legend()
     
-    # 训练集SSIM曲线
+    # 训练集
     plt.subplot(3, 3, 3)
     plt.plot(epoches, train_ssims, 'b', label='SSIM')
     plt.title('Training set SSIM over Epochs')

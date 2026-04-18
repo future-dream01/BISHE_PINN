@@ -71,9 +71,9 @@ class Val_Dataset(Dataset):
 def data_prepare(batchsize, train_csv_path=None, val_csv_path=None):
     # 使用默认路径（你也可以在调用时传入自定义路径）
     if train_csv_path is None:
-        train_csv_path = os.path.join(project_root, "datasets/066D_A3_hermites08_banmo_042_101_train.csv") # 请修改为你的训练集CSV路径
+        train_csv_path = os.path.join(project_root, "datasets/066D_A3_train.csv") # 请修改为你的训练集CSV路径
     if val_csv_path is None:
-        val_csv_path = os.path.join(project_root, "datasets/066D_A3_hermites08_banmo_042_101_train.csv")   # 请修改为你的验证集CSV路径
+        val_csv_path = os.path.join(project_root, "datasets/066D_A3_val.csv")   # 请修改为你的验证集CSV路径
     
     # 初始化训练集（自动计算归一化参数）
     train_set = Train_Dataset(train_csv_path)
