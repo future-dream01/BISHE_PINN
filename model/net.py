@@ -223,11 +223,11 @@ class Resn_Conv(nn.Module):
 
 ##################################### 全连接 ###################################
 # 全连接神经网络骨架
-class Backbone_Lin(nn.Mdule):
+class Backbone_Lin(nn.Module):
     def __init__(self):
         super(Backbone_Lin,self).__init__()
-        self.silu()=nn.SiLU()
-        self.softplus()=nn.Softplus()
+        self.silu=nn.SiLU()
+        self.softplus=nn.Softplus()
         self.Lin1=nn.Linear(4,64)
         self.Lin2=nn.Linear(64,128)
         self.Lin3=nn.Linear(128,256)

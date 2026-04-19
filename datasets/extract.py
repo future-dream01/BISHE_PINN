@@ -9,18 +9,21 @@ import matplotlib.pyplot as plt
 # ==========================================
 # --- 通用文件与物理参数 ---
 cas_path = "066D_A3_hermites08_banmo_042_101.cas"
-zone_id = 1
+zone_id = 1  # 【关键】先运行一次，看打印的Zone列表，改成正确的流体域ID
 L = 0.095       # 特征长度
 M0 = 0.42       # 来流马赫数
 T0 = 249.15     # 来流静温
 P0 = 47181      # 来流静压
 U0 = M0 * (1.4 * 287 * T0) ** 0.5
 Rou0 = P0 / (287 * T0)
+q0 = 0.5 * 1.4 * P0 * M0**2  # 来流动压，标准无量纲化
+
+# --- 进气道流道范围（强制过滤用）---
+x_inlet = 0.297183   # 入口X坐标
+x_outlet = 0.515712  # 出口X坐标
 
 # --- 训练集参数 (Train) ---
 output_train_csv = "066D_A3_train.csv"
-x_inlet = 0.297183
-x_outlet = 0.515712
 samples_inlet = 5000
 samples_outlet = 5000
 N1_train = 5    # 0.297183 ~ 0.34
@@ -28,7 +31,7 @@ N2_train = 15   # 0.34 ~ 0.47
 N3_train = 5    # 0.47 ~ 0.515712
 samples_train_section = 2000
 near_wall_ratio_train = 0.7
-near_wall_thresh_train = 0.005
+near_wall_thresh_train = 0.005  # 有量纲阈值，单位m
 
 # --- 验证集参数 (Validation) ---
 output_val_csv = "066D_A3_val.csv"
@@ -41,91 +44,127 @@ near_wall_thresh_val = 0.005
 # 【核心函数区域】
 # ==========================================
 
-# 【新增】提取整个流体域所有点的全局极值（用于CSV表头）
-def get_global_stats(target_block, L, U0, T0, P0, Rou0):
-    """
-    读取整个流体域的所有网格点，计算所有变量的全局MIN/MAX
-    返回：包含MIN和MAX的两个字典，以及列名列表
-    """
-    print("\n正在提取整个进气道流域的全局极值（所有网格点）...")
+# 统一无量纲化函数（全局极值和采样数据共用，100%逻辑一致）
+def nondimensionalize_data(points, point_data, L, U0, T0, P0, q0):
+    df = pd.DataFrame({
+        "X": (points[:, 0]) / L,
+        "Y": (points[:, 1]) / L,
+        "Z": (points[:, 2]) / L,
+        "壁面距离": (point_data["WALL_DIST"]) / L,
+        "U": (point_data["X_VELOCITY"]) / U0,
+        "V": (point_data["Y_VELOCITY"]) / U0,
+        "W": (point_data["Z_VELOCITY"]) / U0,
+        "静压": ((point_data["PRESSURE"]) - P0) / q0,
+        "静温": (point_data["TEMPERATURE"]) / T0,
+        "湍流动能": (point_data["TKE"]) / (U0 ** 2),
+        "比耗散率": (point_data["SDR"]) * (L / U0),
+    })
+    return df
+
+# 【修复】仅提取进气道内部有效点的无量纲全局极值
+def get_global_stats(target_block, L, U0, T0, P0, q0, x_inlet, x_outlet):
+    print(f"\n正在提取【进气道内部有效点】的【无量纲化后】全局极值...")
+    
     # 确保数据在节点上
     data = target_block.point_data_to_cell_data(True).cell_data_to_point_data()
     
-    # 对整个流场做无量纲化（和采样函数逻辑完全一致）
-    full_df = pd.DataFrame({
-        "X": (data.points[:, 0])/L,
-        "Y": (data.points[:, 1])/L,
-        "Z": (data.points[:, 2])/L,
-        "壁面距离": (data["WALL_DIST"])/L,
-        "U": (data["X_VELOCITY"])/U0,
-        "V": (data["Y_VELOCITY"])/U0,
-        "W": (data["Z_VELOCITY"])/U0,
-        "静压": ((data["PRESSURE"])-P0)/(Rou0*U0*U0),
-        "静温": (data["TEMPERATURE"])/T0,
-        "湍流动能": (data["TKE"])/(U0*U0),
-        "比耗散率": (data["SDR"])*(L/U0),
-    })
+    # ==========================================
+    # 【核心修复1：强制过滤进气道内部点】
+    # ==========================================
+    # 1. 只保留X在入口~出口之间的点
+    x_coords = data.points[:, 0]
+    in_x_range = (x_coords >= x_inlet) & (x_coords <= x_outlet)
     
-    # 计算全局MIN和MAX
-    global_min = full_df.min().to_dict()
-    global_max = full_df.max().to_dict()
+    # 2. 物理量合理性过滤，排除无效点
+    temp_valid = data["TEMPERATURE"] > 0.8 * T0  # 温度不低于来流的80%
+    press_valid = data["PRESSURE"] > 0            # 压力不能为负
+    tke_valid = data["TKE"] >= 0                  # 湍动能不能为负
+    wall_dist_valid = data["WALL_DIST"] >= 0      # 壁面距离不能为负
     
-    print("✅ 全局极值提取完成：")
-    for col in full_df.columns:
-        print(f"   {col:8s} | MIN: {global_min[col]:.6f} | MAX: {global_max[col]:.6f}")
+    # 合并过滤条件
+    valid_mask = in_x_range & temp_valid & press_valid & tke_valid & wall_dist_valid
     
-    return global_min, global_max, full_df.columns.tolist()
+    # 提取有效点
+    valid_points = data.points[valid_mask]
+    valid_point_data = {}
+    for key in data.point_data.keys():
+        valid_point_data[key] = data.point_data[key][valid_mask]
+    
+    print(f"   总网格点数：{len(data.points)} | 进气道内部有效点数：{len(valid_points)}")
+    if len(valid_points) == 0:
+        print("❌ 错误：没有有效点，请检查Zone ID和x_inlet/x_outlet范围！")
+        exit()
+    
+    # 先对有效点做无量纲化
+    full_nondim_df = nondimensionalize_data(
+        points=valid_points,
+        point_data=valid_point_data,
+        L=L, U0=U0, T0=T0, P0=P0, q0=q0
+    )
+    
+    # 从无量纲化后的有效点里提取MIN/MAX
+    global_min = full_nondim_df.min().to_dict()
+    global_max = full_nondim_df.max().to_dict()
+    
+    # 打印原始有量纲极值，方便你核对
+    print("\n✅ 原始有量纲极值（有效点）：")
+    print(f"   X范围：{valid_points[:,0].min():.6f} ~ {valid_points[:,0].max():.6f} m")
+    print(f"   静温范围：{valid_point_data['TEMPERATURE'].min():.2f} ~ {valid_point_data['TEMPERATURE'].max():.2f} K")
+    print(f"   壁面距离范围：{valid_point_data['WALL_DIST'].min():.6f} ~ {valid_point_data['WALL_DIST'].max():.6f} m")
+    
+    print("\n✅ 无量纲化后的全局极值（有效点）：")
+    for col in full_nondim_df.columns:
+        print(f"   {col:8s} | 无量纲MIN: {global_min[col]:.6f} | 无量纲MAX: {global_max[col]:.6f}")
+    
+    return global_min, global_max, full_nondim_df.columns.tolist()
 
-# 【新增】带全局极值头的CSV保存函数
+# 打印所有Zone信息，帮你找到正确的流体域
+def print_mesh_info(mesh):
+    print("\n" + "="*70)
+    print("Cas文件包含的所有Zone信息（请找到你的进气道流体域ID）：")
+    print("="*70)
+    for i, block in enumerate(mesh):
+        try:
+            name = block.get('Name', f'Zone_{i}')
+        except:
+            name = f'Zone_{i}'
+        
+        n_cells = block.n_cells
+        n_points = block.n_points
+        bounds = block.bounds
+        
+        print(f"✅ Zone ID: {i}")
+        print(f"  名称: {name}")
+        print(f"  网格数: {n_cells} | 节点数: {n_points}")
+        print(f"  X范围: {bounds[0]:.6f} ~ {bounds[1]:.6f} m")
+        print(f"  Y范围: {bounds[2]:.6f} ~ {bounds[3]:.6f} m")
+        print(f"  Z范围: {bounds[4]:.6f} ~ {bounds[5]:.6f} m")
+        print("-" * 50)
+
+# CSV保存函数
 def save_csv_with_header(df, file_path, global_min, global_max, columns):
-    """
-    保存CSV：
-    第1行：原始表头
-    第2行：全局MIN
-    第3行：全局MAX
-    第4行起：采样数据
-    """
-    # 构造MIN/MAX行
-    min_row = pd.DataFrame([global_min], columns=columns)
-    max_row = pd.DataFrame([global_max], columns=columns)
-    
-    # 拼接：MIN -> MAX -> 采样数据
-    final_df = pd.concat([min_row, max_row, df], ignore_index=True)
-    
-    # 保存（注意：此时第0行是MIN，第1行是MAX，第2行起是数据，但表头依然是正确的）
-    # 为了让第1行视觉上是表头，我们手动写入
     with open(file_path, 'w', encoding='utf-8-sig', newline='') as f:
-        # 1. 写入表头
         f.write(','.join(columns) + '\n')
-        # 2. 写入MIN行（标记一下方便识别，或者直接写数值）
         min_vals = [f"{global_min[col]:.10f}" for col in columns]
         f.write(','.join(min_vals) + '\n')
-        # 3. 写入MAX行
         max_vals = [f"{global_max[col]:.10f}" for col in columns]
         f.write(','.join(max_vals) + '\n')
-        # 4. 写入采样数据
         df.to_csv(f, header=False, index=False, float_format='%.10f')
     
     print(f"✅ 文件已保存：{file_path}")
-    print(f"   格式：第1行=表头 | 第2行=全局MIN | 第3行=全局MAX | 第4行起=数据")
+    print(f"   格式：第1行=表头 | 第2行=无量纲全局MIN | 第3行=无量纲全局MAX | 第4行起=无量纲采样数据")
 
-def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio, L, U0, T0, P0, Rou0):
-    df = pd.DataFrame({
-        "X": (slice_data.points[:, 0])/L,
-        "Y": (slice_data.points[:, 1])/L,
-        "Z": (slice_data.points[:, 2])/L,
-        "壁面距离": (slice_data["WALL_DIST"])/L,
-        "U": (slice_data["X_VELOCITY"])/U0,
-        "V": (slice_data["Y_VELOCITY"])/U0,
-        "W": (slice_data["Z_VELOCITY"])/U0,
-        "静压": ((slice_data["PRESSURE"])-P0)/(Rou0*U0*U0),
-        "静温": (slice_data["TEMPERATURE"])/T0,
-        "湍流动能": (slice_data["TKE"])/(U0*U0),
-        "比耗散率": (slice_data["SDR"])*(L/U0),
-    })
+# 分层采样函数
+def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio, L, U0, T0, P0, q0):
+    df = nondimensionalize_data(
+        points=slice_data.points,
+        point_data=slice_data.point_data,
+        L=L, U0=U0, T0=T0, P0=P0, q0=q0
+    )
     
-    near_wall = df[df["壁面距离"] < near_thresh].copy()
-    far_wall = df[df["壁面距离"] >= near_thresh].copy()
+    near_thresh_nondim = near_thresh / L
+    near_wall = df[df["壁面距离"] < near_thresh_nondim].copy()
+    far_wall = df[df["壁面距离"] >= near_thresh_nondim].copy()
 
     near_num = int(total_samples * near_ratio)
     far_num = total_samples - near_num
@@ -136,14 +175,15 @@ def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio, L, U
     sampled_df = pd.concat([near_sampled, far_sampled], ignore_index=True)
     return sampled_df
 
+# 可视化函数
 def visualize_sampling_points(slice_points, sampled_points, x_pos, set_name=""):
     plt.figure(figsize=(9, 8))
-    plt.scatter(slice_points[:, 1], slice_points[:, 2], c="lightgray", s=4, alpha=0.3, label="原始所有点")
+    plt.scatter(slice_points[:, 1]/L, slice_points[:, 2]/L, c="lightgray", s=4, alpha=0.3, label="原始所有点")
     plt.scatter(sampled_points["Y"], sampled_points["Z"], c="crimson", s=6, alpha=0.9, label="采样点")
     
     prefix = f"[{set_name}]" if set_name else ""
-    plt.xlabel("Y (m)")
-    plt.ylabel("Z (m)")
+    plt.xlabel("Y (无量纲)")
+    plt.ylabel("Z (无量纲)")
     plt.title(f"{prefix} 截面 X = {x_pos:.6f} m\n采样总数：{len(sampled_points)}")
     plt.legend()
     plt.axis("equal")
@@ -151,6 +191,7 @@ def visualize_sampling_points(slice_points, sampled_points, x_pos, set_name=""):
     plt.tight_layout()
     plt.show()
 
+# 坐标重合检查
 def check_overlap(train_x, val_x, tol=1e-6):
     print("\n" + "="*70)
     print("正在验证坐标重合情况...")
@@ -171,10 +212,10 @@ def check_overlap(train_x, val_x, tol=1e-6):
     print("="*70)
     return overlap_coords
 
+# 截面处理函数
 def process_sections(target_block, x_list, sample_counts, near_thresh, near_ratio, 
-                     L, U0, T0, P0, Rou0, set_name=""):
+                     L, U0, T0, P0, q0, set_name=""):
     all_data = []
-    far_ratio = 1 - near_ratio
     
     for idx, x_pos in enumerate(x_list):
         print(f"\n[{set_name}] 处理第 {idx+1}/{len(x_list)} 个截面 X = {x_pos:.6f}")
@@ -187,8 +228,10 @@ def process_sections(target_block, x_list, sample_counts, near_thresh, near_rati
         slice_plane = slice_plane.point_data_to_cell_data(True).cell_data_to_point_data()
         current_samples = sample_counts[idx]
         
-        sampled_df = stratified_sampling(slice_plane, near_thresh, current_samples, near_ratio,
-                                          L, U0, T0, P0, Rou0)
+        sampled_df = stratified_sampling(
+            slice_plane, near_thresh, current_samples, near_ratio,
+            L, U0, T0, P0, q0
+        )
 
         all_data.append(sampled_df)
         print(f"   完成：实际采样 {len(sampled_df)} 点")
@@ -206,17 +249,28 @@ def main():
     # 1. 读取网格
     print("\n正在读取 Fluent 文件...")
     mesh = pv.read(cas_path)
+    
+    # 打印所有Zone信息，帮你找到正确的ID
+    print_mesh_info(mesh)
+    
+    # 2. 选取指定的Zone
+    print(f"\n正在选取 Zone ID = {zone_id} ...")
     target_block = mesh[zone_id]
+    
     if target_block is None or target_block.n_points == 0:
-        print("错误：无有效网格")
+        print(f"❌ 错误：Zone ID {zone_id} 无有效网格，请检查上面的Zone列表！")
         return
-    print(f"✅ 已加载流体域 Zone {zone_id}")
+    
+    print(f"✅ 已选中 Zone ID {zone_id}")
+    print(f"   总节点数: {target_block.n_points}")
+    print(f"   原始X范围: {target_block.bounds[0]:.6f} ~ {target_block.bounds[1]:.6f} m")
 
-    # 【关键步骤1：训练前提取整个流场的全局极值】
-    # 注意：训练集和验证集使用【同一套】全局极值，保证归一化基准一致
-    global_min, global_max, columns = get_global_stats(target_block, L, U0, T0, P0, Rou0)
+    # 3. 提取进气道内部有效点的无量纲全局极值
+    global_min, global_max, columns = get_global_stats(
+        target_block, L, U0, T0, P0, q0, x_inlet, x_outlet
+    )
 
-    # 2. 准备训练集截面坐标
+    # 4. 准备训练集截面坐标
     print("\n正在生成训练集截面...")
     s1 = np.linspace(x_inlet, 0.34, N1_train + 2)[1:-1]
     s2 = np.linspace(0.34, 0.47, N2_train)
@@ -238,48 +292,46 @@ def main():
 
     print(f"训练集共 {len(train_x)} 个截面")
 
-    # 3. 准备验证集截面坐标
+    # 5. 准备验证集截面坐标
     val_x = np.array(val_x_sections)
     val_x = np.sort(val_x)
     val_sample_counts = [samples_val_section] * len(val_x)
     print(f"\n验证集共 {len(val_x)} 个指定截面")
 
-    # 4. 重合性检查
+    # 6. 重合性检查
     check_overlap(train_x, val_x)
 
-    # 5. 处理训练集
+    # 7. 处理训练集
     print("\n" + "="*70)
     print("开始处理【训练集】")
     print("="*70)
     df_train = process_sections(
         target_block, train_x, train_sample_counts,
         near_wall_thresh_train, near_wall_ratio_train,
-        L, U0, T0, P0, Rou0, set_name="Train"
+        L, U0, T0, P0, q0, set_name="Train"
     )
     
     if not df_train.empty:
-        # 【关键修改】使用新的保存函数，带上全局极值头
         save_csv_with_header(df_train, output_train_csv, global_min, global_max, columns)
-        print(f"   训练集采样点数：{len(df_train)}")
+        print(f"   训练集总采样点数：{len(df_train)}")
 
-    # 6. 处理验证集
+    # 8. 处理验证集
     print("\n" + "="*70)
     print("开始处理【验证集】")
     print("="*70)
     df_val = process_sections(
         target_block, val_x, val_sample_counts,
         near_wall_thresh_val, near_wall_ratio_val,
-        L, U0, T0, P0, Rou0, set_name="Val"
+        L, U0, T0, P0, q0, set_name="Val"
     )
     
     if not df_val.empty:
-        # 【关键修改】验证集也使用【同一套】全局极值
         save_csv_with_header(df_val, output_val_csv, global_min, global_max, columns)
-        print(f"   验证集采样点数：{len(df_val)}")
+        print(f"   验证集总采样点数：{len(df_val)}")
 
     print("\n" + "="*70)
     print("所有任务完成！")
-    print("重要提示：训练集和验证集使用了完全相同的全局极值（来自整个流场），保证归一化一致性。")
+    print(f"✅ 核心保证：所有极值、采样数据均来自进气道内部有效点，无量纲化逻辑完全统一")
     print("="*70)
 
 if __name__ == "__main__":

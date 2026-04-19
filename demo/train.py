@@ -36,8 +36,10 @@ logger.add(log_file_path,rotation="50000 MB",level="INFO")               #创建
 def train():
     # 训练前备工作
     global train_nan_loss,val_nan_loss      
-    train_dataloader, val_dataloader ,input_min ,input_max= data_prepare(BATCHSIZE)        # 创建数据加载器对象
-    M = PINN()                                  # 创建模型对象
+    train_dataloader, val_dataloader ,data_min ,data_max= data_prepare(BATCHSIZE)        # 创建数据加载器对象
+    data_min = torch.tensor(data_min, dtype=torch.float32).to(device)  # numpy张量转torch张量
+    data_max = torch.tensor(data_max, dtype=torch.float32).to(device)
+    M = PINN(device,data_min ,data_max)              # 创建模型对象
     M.to(device)                                # 将模型转移到计算设备上
     optimizer_M = optim.Adam(M.parameters(), lr=0.00005)    # 创建梯度优化器
     start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数
@@ -61,7 +63,7 @@ def train():
         logger.info(f"模型文件加载完成,最低的验证集损失:{min_val_loss}")
 
     # 开启混合精度
-    scaler=GradScaler(device)
+    #scaler=GradScaler(device)
     logger.info("开始训练")
 
     # 开始训练
@@ -82,38 +84,39 @@ def train():
         logger.info(f"第{epoch}轮训练开始，训练集开始训练")
         for input, label in train_dataloader:
             # 每次迭代生成新的输入和输出
-            input, label = input.to(device), label.to(device)
+            input, label = input.to(device).requires_grad_(True), label.to(device)
             optimizer_M.zero_grad()  # 梯度归零
             # 前向传播
-            with autocast(device_type=device):
-                output = M(input)
-                input_sym=input.clone()                              # 构造对称输入
-                input_sym[:,2:3]=-input_sym[:,2:3]
-                output_sym=M(input_sym)                              # 输入对称后的输入
-                output=hard_consrain(input[:,3:4],output,output_sym) # 硬约束
-                loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output,label,input_max,input_min)  # 计算损失
+            #with autocast():
+            output_raw = M(input)
+            input_sym=input.clone()                              # 构造对称输入
+            input_sym[:,2:3]=-input_sym[:,2:3]
+            input_sym=input_sym.detach()
+            output_raw_sym=M(input_sym)                              # 输入对称后的输入
+            output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
+            loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,output_final,label,data_min,data_max)  # 计算损失
 
-                # 数据接收
-                train_loss_batch=loss[0]
-                res_cont_batch=loss[1]
-                res_mx_batch=loss[2]
-                res_my_batch=loss[3]
-                res_mz_batch=loss[4]
-                res_energy_batch=loss[5]
-                res_k_batch=loss[6]
-                res_omega_batch=loss[7]
+            # 数据接收
+            train_loss_batch=loss[0]
+            res_cont_batch=loss[1]
+            res_mx_batch=loss[2]
+            res_my_batch=loss[3]
+            res_mz_batch=loss[4]
+            res_energy_batch=loss[5]
+            res_k_batch=loss[6]
+            res_omega_batch=loss[7]
 
-                train_batches += 1  # 本轮次已迭代的批次总数更新
-                # 每批次训练参数打印
-                logger.info(f"epoch:{epoch},batch:{train_batches},\n loss:{train_loss_batch.item()} \n \
-                    Res_cont:{res_cont_batch.item()} \n Res_mx:{res_mx_batch.item()} \n Res_my:{res_my_batch.item()}\
-                    \n Res_mz:{res_mz_batch.item()} \n Res_energy:{res_energy_batch.item()} \
-                    \n Res_k:{res_k_batch.item()} \n Res_omega:{res_omega_batch.item()}")
+            train_batches += 1  # 本轮次已迭代的批次总数更新
+            # 每批次训练参数打印
+            logger.info(f"epoch:{epoch},batch:{train_batches},\n loss:{train_loss_batch.item()} \n \
+                Res_cont:{res_cont_batch.item()} \n Res_mx:{res_mx_batch.item()} \n Res_my:{res_my_batch.item()}\
+                \n Res_mz:{res_mz_batch.item()} \n Res_energy:{res_energy_batch.item()} \
+                \n Res_k:{res_k_batch.item()} \n Res_omega:{res_omega_batch.item()}")
                 
             if not torch.isnan(train_loss_batch):
-                scaler.scale(train_loss_batch).backward()      # 反向传播
-                scaler.step(optimizer_M)                       # 梯度下降
-                scaler.update()
+                train_loss_batch.backward()      # 反向传播
+                optimizer_M.step()                       # 梯度下降
+                
 
                 # 累加每轮当中的训练参数
                 train_loss_epoch += train_loss_batch.item()  
@@ -167,13 +170,14 @@ def train():
             for input, label in val_dataloader:
                 input, label = input.to(device), label.to(device)
                 optimizer_M.zero_grad()  # 梯度归零
-                with autocast(device_type=device):
-                    output = M(input)
-                    input_sym=input.clone()   # 构造
+                with autocast():
+                    output_raw = M(input)
+                    input_sym=input.clone()                              # 构造对称输入
                     input_sym[:,2:3]=-input_sym[:,2:3]
-                    output_sym=M(input_sym)   # 输入对称后的输入
-                    output=hard_consrain(input[:,3:4],output,output_sym) # 硬约束
-                    val_loss_batch = val_loss_TOTAL(device, output, label)  # 计算验证集损失
+                    input_sym=input_sym.detach()
+                    output_raw_sym=M(input_sym)
+                    output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
+                    val_loss_batch = val_loss_TOTAL(device, output_final, label)  # 计算验证集损失
 
                     val_batches += 1  # 本轮验证集已经迭代的批次数
                     # 打印验证集参数

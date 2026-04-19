@@ -125,8 +125,8 @@ def loss_criterion(device, output, label):
     loss = criterion(output, label)
     return loss
 
-def loss_PDE(L,M0,T0,P0,input,output,input_max,input_min):
-    PDE=RANS_PDE(L,M0,T0,P0,input,output,input_max,input_min)
+def loss_PDE(L,M0,T0,P0,input,output,data_min,data_max):
+    PDE=RANS_PDE(L,M0,T0,P0,input,output,data_min,data_max)
     # 获取原始残差
     res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega=PDE.rans_res()
     # 残差计算MSE
@@ -138,22 +138,22 @@ def loss_PDE(L,M0,T0,P0,input,output,input_max,input_min):
     loss_pde=loss_cont+2*loss_mom+1.5*loss_energy+500*loss_k+700*loss_omega
     return loss_pde,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega
 
-def loss_Bondray(L,M0,T0,P0,input,output,input_max,input_min):
-    PDE=RANS_PDE(L,M0,T0,P0,input,output,input_max,input_min)
+def loss_Bondray(L,M0,T0,P0,input,output,data_min,data_max):
+    PDE=RANS_PDE(L,M0,T0,P0,input,output,data_min,data_max)
     res_bon=PDE.bon_res()
     loss_bon=torch.mean(res_bon**2)
     return loss_bon
     
 # 训练集总损失
-def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output,label,input_max,input_min):
-    mse_loss = loss_MSE(device, output, label)
-    l1_loss = loss_L1(device, output, label)
-    pde_loss,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega=loss_PDE(L,M0,T0,P0,input,output,input_max,input_min)
+def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,output_final,label,data_min,data_max):
+    mse_loss = loss_MSE(device, output_final, label)
+    l1_loss = loss_L1(device, output_final, label)
+    pde_loss,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega=loss_PDE(L,M0,T0,P0,input,output_raw,data_min,data_max)
     if epoch<PDEloss_start_epoch:
         total_loss=mse_loss+l1_loss
         return total_loss,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega
     else:
-        bon_loss=loss_Bondray(L,M0,T0,P0,input,output,input_max,input_min)
+        bon_loss=loss_Bondray(L,M0,T0,P0,input,output_raw,data_min,data_max)
         total_loss =0.4* mse_loss+l1_loss*0.4+pde_loss+bon_loss
         return total_loss,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega
 
@@ -172,7 +172,7 @@ def hard_consrain(input_d,output,output_sym):
     W = 0.5 * (output[:, 2:3] - output_sym[:, 2:3])
     P = 0.5 * (output[:, 3:4] + output_sym[:, 3:4])
     T = 0.5 * (output[:, 4:5] + output_sym[:, 4:5])
-    k = 0.5 * (output[:, 5:6] + output_sym[:, 5:6])
+    K = 0.5 * (output[:, 5:6] + output_sym[:, 5:6])
     Omega = 0.5 * (output[:, 6:7] + output_sym[:, 6:7])
 
     # 壁面无滑移硬约束
@@ -188,7 +188,7 @@ def hard_consrain(input_d,output,output_sym):
 
 # 残差损失
 class RANS_PDE():
-    def __init__(self,L,M0,T0,P0,input,output,input_max,input_min):  # (网络输出（无量纲化），网路输出（归一化），网络输入最大值，网络输入最小值)
+    def __init__(self,L,M0,T0,P0,input,output,data_min,data_max):  # (网络输出（无量纲化），网路输出（归一化），网络输入最大值，网络输入最小值)
         # 无量纲化参数一、先明确两个概念的区别（避免混淆）
         self.L=L        # 特征长度
         self.M0=M0      # 来流马赫数
@@ -215,11 +215,14 @@ class RANS_PDE():
         self.Pr = 0.72     # 普朗特数
         self.Pr_t = 0.9    # 湍流普朗特数
         self.gamma = 1.4   # 空气比热比
-        self.input_max=input_max
-        self.input_min=input_min
+
+        self.input=input
+        self.input_min=data_min[0:4]
+        self.input_max=data_max[0:4]
         self.output=output  # 无量纲输出 
+        self.input=input
         self.input=self.input * (self.input_max - self.input_min + 1e-8) + self.input_min  # 反归一化到无量纲输入
-        self.XYZ=self.input[:,0:3]   # 无量纲坐标xyz
+        self.XYZ=self.input[:,:3]   # 无量纲坐标xyz
         self.X=self.input[:,0:1]     # 无量纲坐标x
         self.Y=self.input[:,1:2]     # 无量纲坐标y
         self.Z=self.input[:,2:3]     # 无量纲坐标z
@@ -227,12 +230,12 @@ class RANS_PDE():
 
     # 求导函数
     def grad(self,y,x):
-        out=torch.autograd.grad(y.sum(),x,create_graph=True,retain_graph=True)[0]  # 无量纲输出对无量纲输入的导数
+        out=torch.autograd.grad(y.sum(),x,create_graph=True,retain_graph=True,allow_unused=True)[0]  # 无量纲输出对无量纲输入的导数
         return out
     
     def rans_res(self): # 输入input形状：[无量纲x，无量纲y，无量纲z，无量纲壁面距离d]
-        N=input.shape[0]    # 批次数
-
+        #N=input.shape[0]    # 批次数
+    
         # 网络输出无量纲参数
         U=self.output[:,0:1]  # 无量纲x方向速度
         V=self.output[:,1:2]  # 无量纲y方向速度
@@ -262,9 +265,9 @@ class RANS_PDE():
 
         # W关于x、y、z的导数
         grad_W=self.grad(V,self.XYZ)
-        dW_dX=grad_V[:,0:1]
-        dW_dY=grad_V[:,1:2]
-        dW_dZ=grad_V[:,2:3]
+        dW_dX=grad_W[:,0:1]
+        dW_dY=grad_W[:,1:2]
+        dW_dZ=grad_W[:,2:3]
 
         # Rou*U关于x的导数
         grad_Rou_U=self.grad(Rou*U,self.XYZ)
@@ -298,31 +301,12 @@ class RANS_PDE():
 
         # Omega关于x、y、z的导数
         grad_Omega=self.grad(Omega,self.XYZ)
-        dOmega_dX=grad_K[:,0:1]
-        dOmega_dY=grad_K[:,1:2]
-        dOmega_dZ=grad_K[:,2:3]
+        dOmega_dX=grad_Omega[:,0:1]
+        dOmega_dY=grad_Omega[:,1:2]
+        dOmega_dZ=grad_Omega[:,2:3]
 
         ################################## 方程搭建
-        # 连续方程
-        Res_C=dRou_U_dX+dRou_V_dY+dRou_W_dZ
-
-        # x方向动量方程
-        Res_MX=Rou*(U*dU_dX+V*dU_dY+W*dU_dZ)+dP_dX-\
-               (1/self.Re0)*self.grad((Miu+Miu_t)*(2*dU_dX-(2/3)*(dU_dX+dV_dY+dW_dZ)),self.X)-\
-               (1/self.Re0)*self.grad((Miu+Miu_t)*(dU_dY+dV_dX),self.Y)-\
-               (1/self.Re0)*self.grad((Miu+Miu_t)*(dU_dZ+dW_dX),self.Z)
         
-        # Y方向动量方程
-        Res_MY=Rou*(U*dV_dX+V*dV_dY+W*dV_dZ)+dP_dY-\
-               (1/self.Re0)*self.grad((Miu+Miu_t)*(dV_dX+dU_dY),self.X)-\
-               (1/self.Re0)*self.grad((Miu+Miu_t)*(2*dV_dY-(2/3)*(dU_dX+dV_dY+dW_dZ)),self.Y)-\
-               (1/self.Re0)*self.grad((Miu+Miu_t)*(dV_dZ+dW_dY),self.Z)
-        
-        # Z方向动量方程
-        Res_MZ=Rou*(U*dW_dX+V*dW_dY+W*dW_dZ)+dP_dZ-\
-               (1/self.Re0)*self.grad((Miu+Miu_t)*(dW_dX+dU_dZ),self.X)-\
-               (1/self.Re0)*self.grad((Miu+Miu_t)*(dW_dY+dV_dZ),self.Y)-\
-               (1/self.Re0)*self.grad((Miu+Miu_t)*(2*dW_dZ-(2/3)*(dU_dX+dV_dY+dW_dZ)),self.Z)
         
         # 能量方程
         Omu=((dW_dY-dV_dZ)**2+(dU_dZ-dW_dX)**2+(dV_dX-dU_dY)**2)**0.5            # 涡量幅值
@@ -343,7 +327,7 @@ class RANS_PDE():
         F1=torch.tanh(arg1**4)
         sigma_k=F1*(self.sigma_k1)+(1-F1)*self.sigma_k2
         P_k=torch.min(Miu_t*self.Re0*(2*dU_dX**2+2*dV_dY**2+2*dW_dZ**2+(dV_dX+dU_dY)**2+(dU_dZ+dW_dX)**2+(dV_dZ+dW_dY)**2-(2/3)*(dU_dX+dV_dY+dW_dZ)**2),(20*self.beta_star*Rou*K*Omega))
-        Res_K=Rou(U*dK_dX+V*dK_dY+W*dK_dZ)-P_k+(self.beta_star*Rou*K*Omega)-\
+        Res_K=Rou*(U*dK_dX+V*dK_dY+W*dK_dZ)-P_k+(self.beta_star*Rou*K*Omega)-\
               (1/self.Re0)*(self.grad(((Miu+sigma_k*Miu_t)*dK_dX),self.X)+\
               self.grad(((Miu+sigma_k*Miu_t)*dK_dY),self.Y)+\
               self.grad(((Miu+sigma_k*Miu_t)*dK_dZ),self.Z))
@@ -359,7 +343,27 @@ class RANS_PDE():
                   (self.grad((Miu+sigma_omega*Miu_t)*dOmega_dZ,self.Z)))-\
                   2*(1-F1)*((Rou*self.sigma_omega2)/(Omega))*\
                   (dK_dX*dOmega_dX+dK_dY*dOmega_dY+dK_dZ*dOmega_dZ)
+    
+        # 连续方程
+        Res_C=dRou_U_dX+dRou_V_dY+dRou_W_dZ
+
+        # x方向动量方程
+        Res_MX=Rou*(U*dU_dX+V*dU_dY+W*dU_dZ)+dP_dX-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(2*dU_dX-(2/3)*(dU_dX+dV_dY+dW_dZ)),self.X)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dU_dY+dV_dX),self.Y)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dU_dZ+dW_dX),self.Z)
         
+        # Y方向动量方程
+        Res_MY=Rou*(U*dV_dX+V*dV_dY+W*dV_dZ)+dP_dY-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dV_dX+dU_dY),self.X)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(2*dV_dY-(2/3)*(dU_dX+dV_dY+dW_dZ)),self.Y)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dV_dZ+dW_dY),self.Z)
+        
+        # Z方向动量方程
+        Res_MZ=Rou*(U*dW_dX+V*dW_dY+W*dW_dZ)+dP_dZ-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dW_dX+dU_dZ),self.X)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(dW_dY+dV_dZ),self.Y)-\
+               (1/self.Re0)*self.grad((Miu+Miu_t)*(2*dW_dZ-(2/3)*(dU_dX+dV_dY+dW_dZ)),self.Z)
         return Res_C,Res_MX,Res_MY,Res_MZ,Res_E,Res_K,Res_Omega
 
     # 绝热壁面残差
