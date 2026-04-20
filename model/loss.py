@@ -222,7 +222,7 @@ class RANS_PDE():
         self.output=output  # 无量纲输出 
         self.input=input
         self.input=self.input * (self.input_max - self.input_min + 1e-8) + self.input_min  # 反归一化到无量纲输入
-        self.XYZ=self.input[:,:3]   # 无量纲坐标xyz
+        self.XYZ=self.input[:,0:3]   # 无量纲坐标xyz
         self.X=self.input[:,0:1]     # 无量纲坐标x
         self.Y=self.input[:,1:2]     # 无量纲坐标y
         self.Z=self.input[:,2:3]     # 无量纲坐标z
