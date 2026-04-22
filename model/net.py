@@ -223,10 +223,12 @@ class Resn_Conv(nn.Module):
 
 ##################################### 全连接 ###################################
 # 全连接神经网络骨架
+# 全连接神经网络骨架
 class Backbone_Lin(nn.Module):
     def __init__(self):
         super(Backbone_Lin,self).__init__()
         self.silu=nn.SiLU()
+        self.softmax=nn.Softmax()
         self.softplus=nn.Softplus()
         self.Lin1=nn.Linear(4,64)
         self.Lin2=nn.Linear(64,128)
@@ -236,6 +238,7 @@ class Backbone_Lin(nn.Module):
         self.Lin4=nn.Linear(256,128)
         self.Lin5=nn.Linear(128,64)
         self.Lin6=nn.Linear(64,7)
+    
     def forward(self,x):
         x=self.Lin1(x)
         x=self.silu(x)
@@ -250,11 +253,18 @@ class Backbone_Lin(nn.Module):
         x=self.Lin5(x)
         x=self.silu(x)
         x=self.Lin6(x)
-        # 最后一层，uvw保持线性输出，其他物理量使用softplus激活函数保证输出为正
-        x[:,3:4]=self.softplus(x[:,3:4])   # P
-        x[:,4:5]=self.softplus(x[:,4:5])   # T
-        x[:,5:6]=self.softplus(x[:,5:6])   # K
-        x[:,6:7]=self.softplus(x[:,6:7])   # Omega
+        x=self.softmax(x)
+        # # ✅ 核心修复：用 torch.cat 替代原地切片赋值！
+        # # 前3列（U,V,W）保持线性
+        # uvw = x[:, 0:3]
+        # # 后4列（P,T,K,Omega）用 softplus 保证输出恒正
+        # p = self.silu(x[:, 3:4])
+        # t = self.softplus(x[:, 4:5])
+        # k = self.softplus(x[:, 5:6])
+        # omega = self.softplus(x[:, 6:7])
+        
+        # # 拼接起来，计算图 100% 连通
+        # x = torch.cat([uvw, p, t, k, omega], dim=1)
         return x
 
 

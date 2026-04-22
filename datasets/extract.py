@@ -16,7 +16,7 @@ T0 = 249.15     # 来流静温
 P0 = 47181      # 来流静压
 U0 = M0 * (1.4 * 287 * T0) ** 0.5
 Rou0 = P0 / (287 * T0)
-q0 = 0.5 * 1.4 * P0 * M0**2  # 来流动压，标准无量纲化
+q0 = 1.4 * P0 * M0**2  # 来流动压，标准无量纲化
 
 # --- 进气道流道范围（强制过滤用）---
 x_inlet = 0.297183   # 入口X坐标
@@ -235,7 +235,7 @@ def process_sections(target_block, x_list, sample_counts, near_thresh, near_rati
 
         all_data.append(sampled_df)
         print(f"   完成：实际采样 {len(sampled_df)} 点")
-        visualize_sampling_points(slice_plane.points, sampled_df, x_pos, set_name)
+        #visualize_sampling_points(slice_plane.points, sampled_df, x_pos, set_name)
         
     if not all_data:
         return pd.DataFrame()

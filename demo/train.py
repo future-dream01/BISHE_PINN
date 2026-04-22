@@ -20,12 +20,12 @@ T0=249.15  # 来流静温
 P0=47181   # 来流静压
 
 # 训练超参数设定
-EPOCHES = 300    # 轮次数
+EPOCHES = 1000    # 轮次数
 BATCHSIZE = 1024    # 批次数
-PDEloss_start_epoch=20  # 开始加入PDE残差损失的轮次
+PDEloss_start_epoch=60  # 开始加入PDE残差损失的轮次
 train_nan_loss=val_nan_loss=0   # 一轮中出现异常损失值的批次数量
 LOAD_CP=False     # 是否需要加载之前的检查点
-CP_PATH= f'{project_root}/outputs/weights/01-04_13-11/97weights.pth'    # 检查点权重文件绝对路径
+CP_PATH= f'{project_root}/outputs/weights/04-22_20-56/54weights.pth'    # 检查点权重文件绝对路径
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # 计算设备
 current_datetime = datetime.now().strftime("%m-%d_%H-%M")               # 当前时间
 log_file_path=f'{project_root}/outputs/训练与性能情况/{current_datetime}/损失日志.log'  # 训练日志文件的绝对路径
@@ -92,7 +92,7 @@ def train():
             input_sym=input.clone()                              # 构造对称输入
             input_sym[:,2:3]=-input_sym[:,2:3]
             input_sym=input_sym.detach()
-            output_raw_sym=M(input_sym)                              # 输入对称后的输入
+            output_raw_sym=M(input_sym)    
             output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
             loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,output_final,label,data_min,data_max)  # 计算损失
 
@@ -108,8 +108,8 @@ def train():
 
             train_batches += 1  # 本轮次已迭代的批次总数更新
             # 每批次训练参数打印
-            logger.info(f"epoch:{epoch},batch:{train_batches},\n loss:{train_loss_batch.item()} \n \
-                Res_cont:{res_cont_batch.item()} \n Res_mx:{res_mx_batch.item()} \n Res_my:{res_my_batch.item()}\
+            logger.info(f"epoch:{epoch},batch:{train_batches},\n loss:{train_loss_batch.item()} \n Res_cont:{res_cont_batch.item()}\
+                 \n Res_mx:{res_mx_batch.item()} \n Res_my:{res_my_batch.item()}\
                 \n Res_mz:{res_mz_batch.item()} \n Res_energy:{res_energy_batch.item()} \
                 \n Res_k:{res_k_batch.item()} \n Res_omega:{res_omega_batch.item()}")
                 
@@ -153,10 +153,10 @@ def train():
         res_omega_epoches.append(res_omega_epoch)
 
         # 训练参数打印
-        logger.info(f"epoch:{epoch},\n loss_average:{train_loss_epoch} \n \
-                    Res_cont_average:{res_cont_epoch} \n Res_mx_average:{res_mx_epoch} \n Res_my_average:{res_my_epoch}\
-                    \n Res_mz_average:{res_mz_epoch} \n Res_energy_average:{res_energy_epoch} \
-                    \n Res_k_average:{res_k_epoch} \n Res_omega_average:{res_omega_epoch}")
+        logger.info(f"epoch:{epoch},\n train_loss_average:{train_loss_epoch} \n \
+            Res_cont_average:{res_cont_epoch} \n Res_mx_average:{res_mx_epoch} \n Res_my_average:{res_my_epoch}\
+            \n Res_mz_average:{res_mz_epoch} \n Res_energy_average:{res_energy_epoch} \
+            \n Res_k_average:{res_k_epoch} \n Res_omega_average:{res_omega_epoch}")
 
         # 每轮参数归零
         train_nan_loss=train_loss_epoch = res_cont_epoch=res_mx_epoch=res_my_epoch=res_mz_epoch=\
@@ -170,18 +170,17 @@ def train():
             for input, label in val_dataloader:
                 input, label = input.to(device), label.to(device)
                 optimizer_M.zero_grad()  # 梯度归零
-                with autocast():
-                    output_raw = M(input)
-                    input_sym=input.clone()                              # 构造对称输入
-                    input_sym[:,2:3]=-input_sym[:,2:3]
-                    input_sym=input_sym.detach()
-                    output_raw_sym=M(input_sym)
-                    output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
-                    val_loss_batch = val_loss_TOTAL(device, output_final, label)  # 计算验证集损失
+                output_raw = M(input)
+                input_sym=input.clone()                              # 构造对称输入
+                input_sym[:,2:3]=-input_sym[:,2:3]
+                input_sym=input_sym.detach()
+                output_raw_sym=M(input_sym)
+                output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
+                val_loss_batch = val_loss_TOTAL(device, output_final, label)  # 计算验证集损失
 
-                    val_batches += 1  # 本轮验证集已经迭代的批次数
-                    # 打印验证集参数
-                    logger.info(f"epoch:{epoch},batch:{val_batches},\n loss:{val_loss_batch.item()} ")
+                val_batches += 1  # 本轮验证集已经迭代的批次数
+                # 打印验证集参数
+                logger.info(f"epoch:{epoch},batch:{val_batches},\n loss:{val_loss_batch.item()} ")
                 if not torch.isnan(val_loss_batch):
                     val_loss_epoch += val_loss_batch.item()  # 累加损失
                 else:
@@ -193,7 +192,7 @@ def train():
         # 将验证集平均损失添加到列表中
         val_losses.append(val_loss_epoch)
 
-        logger.info(f"epoch:{epoch},\n loss_average:{val_loss_epoch}")
+        logger.info(f"epoch:{epoch},\n val_loss_average:{val_loss_epoch}")
         val_nan_loss=0
 
         ##################### 决定是否保存当前轮次 ###############################
