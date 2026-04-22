@@ -125,43 +125,90 @@ def loss_criterion(device, output, label):
     loss = criterion(output, label)
     return loss
 
-def loss_PDE(L,M0,T0,P0,input,output,data_min,data_max):
+
+def loss_PDE_and_bon(L,M0,T0,P0,input,output,data_min,data_max):
     PDE=RANS_PDE(L,M0,T0,P0,input,output,data_min,data_max)
     # 获取原始残差
     res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega=PDE.rans_res()
-    # 残差计算MSE
+    # 残差计算MSE（只算单项，不加权，权重在外面动态加）
     loss_cont=(res_cont**2).mean()
     loss_mom=(res_mx**2+res_my**2+res_mz**2).mean()
     loss_energy=(res_energy**2).mean()
     loss_k=(res_k**2).mean()
     loss_omega=(res_omega**2).mean()
-    loss_pde=loss_cont+2*loss_mom+1.5*loss_energy+0.0001*loss_k+0.00000000001*loss_omega
-    return loss_pde,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega
-
-def loss_Bondray(L,M0,T0,P0,input,output,data_min,data_max):
-    PDE=RANS_PDE(L,M0,T0,P0,input,output,data_min,data_max)
+    # 边界损失
     res_bon=PDE.bon_res()
     loss_bon=(res_bon**2).mean()
-    return loss_bon
+
+    # 返回所有单项损失和残差，方便外面动态加权
+    return loss_cont,loss_mom,loss_energy,loss_k,loss_omega,loss_bon,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega
     
-# 训练集总损失
+# 训练集总损失（核心：动态权重）
 def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,output_final,label,data_min,data_max):
     mse_loss = loss_MSE(device, output_final, label)
     l1_loss = loss_L1(device, output_final, label)
-    pde_loss,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega=loss_PDE(L,M0,T0,P0,input,output_raw,data_min,data_max)
-    bon_loss=loss_Bondray(L,M0,T0,P0,input,output_raw,data_min,data_max)
-    if epoch<PDEloss_start_epoch:
-        total_loss=mse_loss+l1_loss+bon_loss
-        return total_loss,res_cont.mean(),res_mx.mean(),res_my.mean(),res_mz.mean(),res_energy.mean(),res_k.mean(),res_omega.mean()
+    
+    # 获取所有单项损失
+    loss_cont,loss_mom,loss_energy,loss_k,loss_omega,loss_bon,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega = loss_PDE_and_bon(L,M0,T0,P0,input,output_raw,data_min,data_max)
+
+    # ===================== 核心：分阶段动态权重配置 =====================
+    # 阶段1：预热期（PDE损失关闭，只学数据拟合+边界）
+    if epoch < PDEloss_start_epoch:
+        w_cont = 0.0
+        w_mom = 0.0
+        w_energy = 0.0
+        w_k = 0.0
+        w_omega = 0.0
+    
+    # 阶段2：主流场引入期（只学连续/动量/能量，湍流权重极小）
+    elif epoch < PDEloss_start_epoch + 100:
+        w_cont = 1.0
+        w_mom = 2.0
+        w_energy = 1.5
+        w_k = 0.0001       # 极小，几乎不影响
+        w_omega = 1e-8      # 超级小，先压制住
+    
+    # 阶段3：湍流引入期（慢慢提升湍流权重）
+    elif epoch < PDEloss_start_epoch + 200:
+        w_cont = 1.0
+        w_mom = 2.0
+        w_energy = 1.5
+        w_k = 0.001        # ×10
+        w_omega = 1e-6     # ×100
+    
+    # 阶段4：收敛期（最终稳定权重）
     else:
-        total_loss =mse_loss+l1_loss+pde_loss+bon_loss
-        return total_loss,res_cont.mean(),res_mx.mean(),res_my.mean(),res_mz.mean(),res_energy.mean(),res_k.mean(),res_omega.mean()
+        w_cont = 1.0
+        w_mom = 2.0
+        w_energy = 1.5
+        w_k = 0.01         # 最终稳定在0.01
+        w_omega = 1e-4     # 最终稳定在1e-4
+
+    # 计算加权后的PDE总损失
+    loss_pde = (
+        w_cont * loss_cont +
+        w_mom * loss_mom +
+        w_energy * loss_energy +
+        w_k * loss_k +
+        w_omega * loss_omega
+    )
+
+    # ===================== 总损失计算 =====================
+    if epoch < PDEloss_start_epoch:
+        # 预热期：只有数据损失+边界损失
+        total_loss = mse_loss + l1_loss + loss_bon
+    else:
+        # 正式期：数据损失+边界损失+PDE损失
+        total_loss = mse_loss + l1_loss + loss_pde + loss_bon
+
+    return total_loss,res_cont.mean(),res_mx.mean(),res_my.mean(),res_mz.mean(),res_energy.mean(),res_k.mean(),res_omega.mean()
+
 
 # 验证集总损失
 def val_loss_TOTAL(device,output,label):
     mse_loss = loss_MSE(device, output, label)
-    l1_loss = loss_L1(device, output, label)
-    total_loss=mse_loss+l1_loss
+    #l1_loss = loss_L1(device, output, label)
+    total_loss=mse_loss
     return total_loss
 
 # 硬约束函数
