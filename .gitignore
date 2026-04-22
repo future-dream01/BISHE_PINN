@@ -3,3 +3,6 @@
 *.csv
 *.stl
 *.npz
+*.pth
+*.log
+*.png
