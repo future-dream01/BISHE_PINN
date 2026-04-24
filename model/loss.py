@@ -4,7 +4,8 @@ import torch
 import torchvision.models as models
 import torch.nn.functional as F
 import torch.nn.functional as F
-
+from loguru import logger
+import numpy as np
 # 使用预训练的 VGG19 模型作为感知损失的基础
 class PerceptualLoss(nn.Module):
     def __init__(self, layers=['relu2_2', 'relu3_3', 'relu4_3']):
@@ -107,6 +108,49 @@ def ssim(img1, img2, max_val=1.0, window_size=11, sigma=1.5):
     ssim = ssim_map.mean()
     return ssim.cpu()
 
+
+def huber_pde_loss(residual, delta=0.1):
+    abs_res = torch.abs(residual)
+    quadratic = torch.clamp(abs_res, max=delta)
+    linear = abs_res - quadratic
+    return torch.mean(0.5 * quadratic**2 + delta * linear)
+
+
+def data(device, output, label):
+    U=output[:,0:1]  # 无量纲x方向速度
+    V=output[:,1:2]  # 无量纲y方向速度
+    W=output[:,2:3]  # 无量纲z方向速度
+    P=output[:,3:4]  # 无量纲压强
+    T=torch.clamp(output[:,4:5],min=1e-4)  # 无量纲静温
+    K=torch.clamp(output[:,5:6],min=1e-10)  # 无量纲湍流动能
+    Omega=torch.clamp(output[:,6:7],min=1e-4) # 无量纲比耗散率
+
+    U_t=label[:,0:1]  # 无量纲x方向速度
+    V_t=label[:,1:2]  # 无量纲y方向速度
+    W_t=label[:,2:3]  # 无量纲z方向速度
+    P_t=label[:,3:4]  # 无量纲压强
+    T_t=label[:,4:5]  # 无量纲压强
+    K_t=label[:,5:6]  # 无量纲压强
+    Omega_t=label[:,6:7]  # 无量纲压强
+
+    MSE = nn.MSELoss().to(device)
+    L1 = nn.L1Loss().to(device)
+    loss_U=MSE(U, U_t)+L1(U, U_t)
+    loss_V=MSE(V, V_t)+L1(V, V_t)
+    loss_W=MSE(W, W_t)+L1(W, W_t)
+    loss_P=MSE(P, P_t)+L1(P, P_t)
+    loss_T=MSE(T, T_t)+L1(T, T_t)
+    loss_K=MSE(K, K_t)+L1(K, K_t)
+    loss_Omega=MSE(Omega, Omega_t)+L1(Omega, Omega_t)
+
+    data_loss=loss_U+loss_V+loss_W+loss_P+loss_T+5*loss_K+5*loss_Omega
+
+    return data_loss
+    
+
+
+
+
 # MSE损失
 def loss_MSE(device, output, label):
     MSE = nn.MSELoss().to(device)
@@ -131,61 +175,146 @@ def loss_PDE_and_bon(L,M0,T0,P0,input,output,data_min,data_max):
     # 获取原始残差
     res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega=PDE.rans_res()
     # 残差计算MSE（只算单项，不加权，权重在外面动态加）
-    loss_cont=(res_cont**2).mean()
-    loss_mom=(res_mx**2+res_my**2+res_mz**2).mean()
-    loss_energy=(res_energy**2).mean()
-    loss_k=(res_k**2).mean()
-    loss_omega=(res_omega**2).mean()
+    loss_cont=huber_pde_loss(res_cont)
+    loss_mom=huber_pde_loss(res_mx+res_my+res_mz)
+    loss_energy=huber_pde_loss(res_energy)
+    loss_k=huber_pde_loss(res_k)
+    loss_omega=huber_pde_loss(res_omega)
     # 边界损失
     res_bon=PDE.bon_res()
-    loss_bon=(res_bon**2).mean()
+    loss_bon=huber_pde_loss(res_bon)
 
     # 返回所有单项损失和残差，方便外面动态加权
     return loss_cont,loss_mom,loss_energy,loss_k,loss_omega,loss_bon,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega
-    
-# 训练集总损失（核心：动态权重）
-def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,output_final,label,data_min,data_max):
-    mse_loss = loss_MSE(device, output_final, label)
-    l1_loss = loss_L1(device, output_final, label)
-    
-    # 获取所有单项损失
-    loss_cont,loss_mom,loss_energy,loss_k,loss_omega,loss_bon,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega = loss_PDE_and_bon(L,M0,T0,P0,input,output_raw,data_min,data_max)
 
-    # ===================== 核心：分阶段动态权重配置 =====================
-    # 阶段1：预热期（PDE损失关闭，只学数据拟合+边界）
-    if epoch < PDEloss_start_epoch:
+
+# 反归一化函数
+def denormalize_for_pde(output_raw, data_min, data_max):
+    """
+    将网络输出的 [0, 1] 归一化值还原回物理空间，用于计算 PDE 残差。
+    全程使用 Torch 操作，保证计算图不中断，可反向传播。
+    
+    参数:
+        output_raw: [Batch, 7] 网络直接输出 (Sigmoid 后 [0, 1])
+        input_min: [11] 归一化参数数组 (Torch Tensor)
+        input_max: [11] 归一化参数数组 (Torch Tensor)
+        
+    返回:
+        output_final: [Batch, 7] 物理空间无量纲值
+    """
+    device = output_raw.device
+    
+    # 确保统计量在同一设备上
+    dm = data_min.to(device)
+    dmx = data_max.to(device)
+    
+    # 提取输出部分的统计量 (后7维: indices 4 to 10)
+    out_min = dm[4:11]
+    out_max = dmx[4:11]
+    
+    # ==========================================
+    # 第一步：通用线性反归一化 (所有变量)
+    # ==========================================
+    # 此时 out_linear 的形状为 [Batch, 7]
+    # 其中:
+    # out_linear[:, 0:4] 是 U, V, W, P, T 的物理值
+    # out_linear[:, 5] 是 ln(K)
+    # out_linear[:, 6] 是 ln(Omega)
+    out_linear = output_raw * (out_max - out_min + 1e-8) + out_min
+    
+    # ==========================================
+    # 第二步：分别处理
+    # ==========================================
+    
+    # 1. 提取前 5 个变量 (U, V, W, P, T)，它们已经是最终物理值了
+    out_uvwpt = out_linear[:, 0:5]
+    
+    # 2. 处理 K (索引 5)
+    # 先钳位防止 exp 爆炸，然后 exp 还原
+    k_ln = out_linear[:, 5:6]
+    k_ln_clamped = torch.clamp(k_ln, min=-20.0, max=20.0) # 安全范围
+    k = torch.exp(k_ln_clamped)
+    
+    # 3. 处理 Omega (索引 6)
+    omega_ln = out_linear[:, 6:7]
+    omega_ln_clamped = torch.clamp(omega_ln, min=-20.0, max=20.0)
+    omega = torch.exp(omega_ln_clamped)
+    
+    # ==========================================
+    # 第三步：安全拼接 (不使用 in-place 操作，保护计算图)
+    # ==========================================
+    output_final = torch.cat([out_uvwpt, k, omega], dim=1)
+
+    logger.info(f"   反归一化之后的U范围: {output_final[:,0:1].min().item():.6f} ~ {output_final[:,0:1].max().item():.6f}")
+    logger.info(f"   反归一化之后的V范围: {output_final[:,1:2].min().item():.6f} ~ {output_final[:,1:2].max().item():.6f}")
+    logger.info(f"   反归一化之后的W范围: {output_final[:,2:3].min().item():.6f} ~ {output_final[:,2:3].max().item():.6f}")
+    logger.info(f"   反归一化之后的P范围: {output_final[:,3:4].min().item():.6f} ~ {output_final[:,3:4].max().item():.6f}")
+    logger.info(f"   反归一化之后的T范围: {output_final[:,4:5].min().item():.6f} ~ {output_final[:,4:5].max().item():.6f}")
+    logger.info(f"   反归一化之后的K范围: {output_final[:,5:6].min().item():.6f} ~ {output_final[:,5:6].max().item():.6f}")
+    logger.info(f"   反归一化之后的Omega范围: {output_final[:,6:7].min().item():.6f} ~ {output_final[:,6:7].max().item():.6f}")
+    
+    return output_final
+
+def sigmoid_schedule(t, T, start_val, end_val):
+    """
+    平滑的 Sigmoid 过渡：两头慢，中间快
+    """
+    if t >= T:
+        return end_val
+    
+    # 将 t/T 映射到 [-6, 6]，sigmoid 在这个区间内从 ~0 变到 ~1
+    x = 12 * (t / T - 0.5) 
+    sigma = 1 / (1 + np.exp(-x))
+    
+    return start_val + (end_val - start_val) * sigma
+
+# 训练集总损失（epoch476+ 精准微调版）
+def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max):
+    
+    loss_data=data(device, output_raw, label)
+    # 获取所有单项损失
+
+    output_final=denormalize_for_pde(output_raw,data_min,data_max)
+
+    loss_cont,loss_mom,loss_energy,loss_k,loss_omega,loss_bon,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega = loss_PDE_and_bon(L,M0,T0,P0,input,output_final,data_min,data_max)
+
+    w_data = 1 
+    w_pde = 0.0001    
+      
+    if epoch < PDEloss_start_epoch: # 第一阶段 纯数据拟合
+        w_pde = 0
         w_cont = 0.0
         w_mom = 0.0
         w_energy = 0.0
         w_k = 0.0
         w_omega = 0.0
     
-    # 阶段2：主流场引入期（只学连续/动量/能量，湍流权重极小）
-    elif epoch < PDEloss_start_epoch + 100:
+    if PDEloss_start_epoch<=epoch < 2*PDEloss_start_epoch:  # 第二阶段 加入连续、动量、能量方程
+        w_pde = sigmoid_schedule(epoch-PDEloss_start_epoch,PDEloss_start_epoch,1e-6,1e-4)
         w_cont = 1.0
         w_mom = 2.0
         w_energy = 1.5
-        w_k = 0.0001       # 极小，几乎不影响
-        w_omega = 1e-8      # 超级小，先压制住
+        w_k = 0
+        w_omega = 0
     
-    # 阶段3：湍流引入期（慢慢提升湍流权重）
-    elif epoch < PDEloss_start_epoch + 200:
+    if 2*PDEloss_start_epoch<=epoch < 3*PDEloss_start_epoch : # 第三阶段 加入K方程
+        w_pde=1e-4
         w_cont = 1.0
         w_mom = 2.0
         w_energy = 1.5
-        w_k = 0.001        # ×10
-        w_omega = 1e-6     # ×100
-    
-    # 阶段4：收敛期（最终稳定权重）
+        w_k = 0.1
+        w_omega = 0
+
     else:
+        w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e-4,2e-4)
         w_cont = 1.0
         w_mom = 2.0
         w_energy = 1.5
-        w_k = 0.01         # 最终稳定在0.01
-        w_omega = 1e-4     # 最终稳定在1e-4
+        w_k = 0.1         
+        w_omega = 0.0002    
 
     # 计算加权后的PDE总损失
-    loss_pde = (
+    loss_pde_unweighted = (
         w_cont * loss_cont +
         w_mom * loss_mom +
         w_energy * loss_energy +
@@ -193,16 +322,16 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_r
         w_omega * loss_omega
     )
 
-    # ===================== 总损失计算 =====================
-    if epoch < PDEloss_start_epoch:
-        # 预热期：只有数据损失+边界损失
-        total_loss = mse_loss + l1_loss + loss_bon
-    else:
-        # 正式期：数据损失+边界损失+PDE损失
-        total_loss = mse_loss + l1_loss + loss_pde + loss_bon
+    loss_pde = w_pde * loss_pde_unweighted
+
+    # 总损失计算
+    total_loss = w_data * loss_data + w_pde*loss_pde
+    logger.info(f"当前数据拟合损失权重：{w_data}")
+    logger.info(f"当前PDE损失权重:{w_pde}")
+    logger.info(f"当前数据拟合损失: {w_data * loss_data.item():.6e} ")
+    logger.info(f"当前PDE残差损失: {loss_pde.item():.6e} ")
 
     return total_loss,res_cont.mean(),res_mx.mean(),res_my.mean(),res_mz.mean(),res_energy.mean(),res_k.mean(),res_omega.mean()
-
 
 # 验证集总损失
 def val_loss_TOTAL(device,output,label):
@@ -288,16 +417,13 @@ class RANS_PDE():
         return out
     
     def rans_res(self): # 输入input形状：[无量纲x，无量纲y，无量纲z，无量纲壁面距离d]
-        #N=input.shape[0]     # 批次数
-        #self.input=self.input * (self.input_max - self.input_min + 1e-8) + self.input_min  # 反归一化到无量纲输入
-        #print(f"input:{self.input}")
         # 网络输出无量纲参数
         U=self.output[:,0:1]  # 无量纲x方向速度
         V=self.output[:,1:2]  # 无量纲y方向速度
         W=self.output[:,2:3]  # 无量纲z方向速度
         P=self.output[:,3:4]  # 无量纲压强
         T=torch.clamp(self.output[:,4:5],min=1e-4)  # 无量纲静温
-        K=torch.clamp(self.output[:,5:6],min=1e-4)  # 无量纲湍流动能
+        K=torch.clamp(self.output[:,5:6],min=1e-10)  # 无量纲湍流动能
         Omega=torch.clamp(self.output[:,6:7],min=1e-4) # 无量纲比耗散率
         #print(f"Omega:{Omega}")
 
@@ -371,7 +497,7 @@ class RANS_PDE():
         arg2=torch.maximum(arg2_1,arg2_2)     # 混合函数F2
         F2=torch.tanh(arg2**2)
         Miu_t=(Rou*self.a1*K)/(self.Re0*(torch.maximum(self.a1*Omega,Omu*F2))+1e-12)       # 湍流粘度 分母开防0保护
-        Miu_t=torch.clamp(Miu_t,min=1e-8,max=1e4) # 防数值爆炸
+        Miu_t=torch.clamp(Miu_t,min=1e-20,max=1e4) # 防数值爆炸
         Phi=((Miu+Miu_t)/self.Re0)*(2*(dU_dX)**2+(dV_dY)**2+2*(dW_dZ)**2+\
             (dU_dY+dV_dX)**2+(dU_dZ+dW_dX)**2+(dV_dZ+dW_dY)**2-(2/3)*(dU_dX+dV_dY+dW_dZ)**2)         # 耗散函数
         Res_E=Rou*(U*(dT_dX)+V*(dT_dY)+W*(dT_dZ))-\
@@ -398,15 +524,16 @@ class RANS_PDE():
         sigma_omega=F1*self.sigma_omega1+(1-F1)*self.sigma_omega2
         alpha=F1*self.alpha1+(1-F1)*self.alpha2
         beta=F1*self.beta1+(1-F1)*self.beta2
-        Res_Omega=Rou*(U*dOmega_dX+V*dOmega_dY+W*dOmega_dZ)-alpha*((Rou*P_k*self.Re0)/(Miu_t+1e-12))+\
+        prod_term = alpha * ((Rou * P_k * self.Re0) / (Miu_t + 1e-12))
+        prod_term = torch.clamp(prod_term, min=-1e3, max=1e3) # 加限制
+        Res_Omega=Rou*(U*dOmega_dX+V*dOmega_dY+W*dOmega_dZ)-prod_term+\
                   beta*Rou*Omega**2-((1/self.Re0)*\
                   (self.grad((Miu+sigma_omega*Miu_t)*dOmega_dX,self.input)[:,0:1])+\
                   (self.grad((Miu+sigma_omega*Miu_t)*dOmega_dY,self.input)[:,1:2])+\
                   (self.grad((Miu+sigma_omega*Miu_t)*dOmega_dZ,self.input)[:,2:3]))-\
                   2*(1-F1)*((Rou*self.sigma_omega2)/(Omega+1e-12))*\
                   (dK_dX*dOmega_dX+dK_dY*dOmega_dY+dK_dZ*dOmega_dZ)
-        #print(Res_Omega)
-    
+
         # 连续方程
         Res_C=dRou_U_dX+dRou_V_dY+dRou_W_dZ
 

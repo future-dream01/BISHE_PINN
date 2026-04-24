@@ -18,14 +18,16 @@ L=0.095    # 特征长度
 M0=0.42    # 来流马赫数
 T0=249.15  # 来流静温
 P0=47181   # 来流静压
+GAMMA = 1.4      # 比热比
+R_gas = 287      # 气体常数
 
 # 训练超参数设定
 EPOCHES = 2000    # 轮次数
 BATCHSIZE = 1024    # 批次数
-PDEloss_start_epoch=200  # 开始加入PDE残差损失的轮次
+PDEloss_start_epoch=100  # 开始加入PDE残差损失的轮次
 train_nan_loss=val_nan_loss=0   # 一轮中出现异常损失值的批次数量
 LOAD_CP=True    # 是否需要加载之前的检查点
-CP_PATH= f'{project_root}/outputs/weights/04-24_14-09/31weights.pth'    # 检查点权重文件绝对路径
+CP_PATH= f'{project_root}/outputs/weights/04-23_20-05/84weights.pth'    # 检查点权重文件绝对路径
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # 计算设备
 current_datetime = datetime.now().strftime("%m-%d_%H-%M")               # 当前时间
 log_file_path=f'{project_root}/outputs/训练与性能情况/{current_datetime}/损失日志.log'  # 训练日志文件的绝对路径
@@ -39,7 +41,7 @@ def train():
     train_dataloader, val_dataloader ,data_min ,data_max= data_prepare(BATCHSIZE)        # 创建数据加载器对象
     data_min = torch.tensor(data_min, dtype=torch.float32).to(device)  # numpy张量转torch张量
     data_max = torch.tensor(data_max, dtype=torch.float32).to(device)
-    M = PINN()              # 创建模型对象
+    M = PINN(device,data_min ,data_max)              # 创建模型对象
     M.to(device)                                # 将模型转移到计算设备上
     optimizer_M = optim.Adam(M.parameters(), lr=0.001)    # 创建梯度优化器
     start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数
@@ -85,23 +87,18 @@ def train():
         for input, label in train_dataloader:
             # 每次迭代生成新的输入和输出
             input, label = input.to(device).requires_grad_(True), label.to(device)
-            logger.info(f"🔍 输入数据检查:")
-            logger.info(f"   输入的归一化x坐标范围: {input[:, 0].min().item():.6f} ~ {input[:, 0].max().item():.6f}")
-            logger.info(f"   输入的归一化y坐标范围: {input[:, 1].min().item():.6f} ~ {input[:, 1].max().item():.6f}")
-            logger.info(f"   输入的归一化z坐标范围: {input[:, 2].min().item():.6f} ~ {input[:, 2].max().item():.6f}")
-            logger.info(f"   输入的归一化壁面距离范围: {input[:, 3].min().item():.6f} ~ {input[:, 3].max().item():.6f}")
             optimizer_M.zero_grad()  # 梯度归零
             # 前向传播
             #with autocast():
             output_raw = M(input)
-            # input_sym=input.clone()                              # 构造对称输入
-            # input_sym[:,2:3]=-input_sym[:,2:3]
-            # input_sym=input_sym.detach()
-            # output_raw_sym=M(input_sym)    
-            # output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
-            loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max)  # 计算损失
+            #input_sym=input.clone()                              # 构造对称输入
+            #input_sym[:,2:3]=-input_sym[:,2:3]
+            #input_sym=input_sym.detach()
+            #output_raw_sym=M(input_sym)    
+            #output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
+            #loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,output_final,label,data_min,data_max)  # 计算损失
 
-            #loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max) 
+            loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max) 
 
             # 数据接收
             train_loss_batch=loss[0]
@@ -178,19 +175,19 @@ def train():
                 input, label = input.to(device), label.to(device)
                 optimizer_M.zero_grad()  # 梯度归零
                 output_raw = M(input)
-                logger.info(f"   验证集 Batch 0 数据范围:")
-                logger.info(f"   U范围: {output_raw[:, 0].min().item():.6f} ~ {output_raw[:, 0].max().item():.6f}")
-                logger.info(f"   V范围: {output_raw[:, 1].min().item():.6f} ~ {output_raw[:, 1].max().item():.6f}")
-                logger.info(f"   W范围: {output_raw[:, 2].min().item():.6f} ~ {output_raw[:, 2].max().item():.6f}")
-                logger.info(f"   P范围: {output_raw[:, 3].min().item():.6f} ~ {output_raw[:, 3].max().item():.6f}")
-                logger.info(f"   T范围: {output_raw[:, 4].min().item():.6f} ~ {output_raw[:, 4].max().item():.6f}")
-                logger.info(f"   K范围: {output_raw[:, 5].min().item():.6f} ~ {output_raw[:, 5].max().item():.6f}")
-                logger.info(f"   Omega范围: {output_raw[:, 6].min().item():.6f} ~ {output_raw[:, 6].max().item():.6f}")
-                # input_sym=input.clone()                              # 构造对称输入
-                # input_sym[:,2:3]=-input_sym[:,2:3]
-                # input_sym=input_sym.detach()
-                # output_raw_sym=M(input_sym)
-                # output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
+                
+                # 🔧 修正了这里的打印：原来是 [0:1] 切片，现在是取整个 batch
+                if val_batches == 0:
+                    logger.info(f"   验证集 Batch 0 数据范围:")
+                    logger.info(f"   U范围: {output_raw[:, 0].min().item():.6f} ~ {output_raw[:, 0].max().item():.6f}")
+                    logger.info(f"   V范围: {output_raw[:, 1].min().item():.6f} ~ {output_raw[:, 1].max().item():.6f}")
+                    logger.info(f"   P范围: {output_raw[:, 3].min().item():.6f} ~ {output_raw[:, 3].max().item():.6f}")
+
+                #input_sym=input.clone()                              # 构造对称输入
+                #input_sym[:,2:3]=-input_sym[:,2:3]
+                #input_sym=input_sym.detach()
+                #output_raw_sym=M(input_sym)
+                #output_final=hard_consrain(input[:,3:4],output_raw) # 硬约束
                 val_loss_batch = val_loss_TOTAL(device, output_raw, label)  # 计算验证集损失
 
                 val_batches += 1  # 本轮验证集已经迭代的批次数
@@ -240,6 +237,153 @@ def train():
         allgraph(current_datetime, epochs,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses)
         logger.info("绘图完成")
         logger.info(f"第{epoch}轮训练全部完成")
+
+        # ===================== 【核心新增】训练完成后，直接用当前模型推理绘图 =====================
+        if epoch == EPOCHES: 
+            logger.info("\n" + "="*60)
+            logger.info("🎨 训练完成，启动内嵌推理绘图 (无权重加载/无数据重新加载)...")
+            logger.info("="*60)
+            
+            M.eval()
+            
+            # 全局存储
+            infer_X, infer_Y, infer_Z, infer_WALL_D = [], [], [], []
+            infer_U_pred, infer_V_pred, infer_W_pred, infer_P_pred, infer_T_pred = [], [], [], [], []
+            infer_U_true, infer_V_true, infer_W_true, infer_P_true, infer_T_true = [], [], [], [], []
+            
+            # 直接用当前的 data_min/data_max
+            in_min_4 = data_min[:4].cpu().numpy()
+            in_max_4 = data_max[:4].cpu().numpy()
+            in_range_4 = in_max_4 - in_min_4 + 1e-8
+            
+            U0_val = M0 * (GAMMA * R_gas * T0) ** 0.5
+            q0_val = GAMMA * P0 * M0**2
+            
+            with torch.no_grad():
+                for input_batch, target_batch in val_dataloader:
+                    input_batch = input_batch.to(device)
+                    target_batch = target_batch.to(device)
+                    
+                    # 【核心】和训练完全一致的前向传播
+                    output_final = M(input_batch)
+                    
+                    # 提取数据
+                    input_np = input_batch.cpu().numpy()
+                    pred_np = output_final.cpu().numpy()
+                    true_np = target_batch.cpu().numpy()
+                    
+                    # 反归一化坐标
+                    input_denorm = input_np * in_range_4 + in_min_4
+                    X, Y, Z, WALL_D = input_denorm[:, 0], input_denorm[:, 1], input_denorm[:, 2], input_denorm[:, 3]
+                    
+                    # 保存数据
+                    infer_X.extend(X); infer_Y.extend(Y); infer_Z.extend(Z); infer_WALL_D.extend(WALL_D)
+                    infer_U_pred.extend(pred_np[:, 0]); infer_V_pred.extend(pred_np[:, 1]); infer_W_pred.extend(pred_np[:, 2])
+                    infer_P_pred.extend(pred_np[:, 3]); infer_T_pred.extend(pred_np[:, 4])
+                    infer_U_true.extend(true_np[:, 0]); infer_V_true.extend(true_np[:, 1]); infer_W_true.extend(true_np[:, 2])
+                    infer_P_true.extend(true_np[:, 3]); infer_T_true.extend(true_np[:, 4])
+            
+            # 转为数组
+            infer_X = np.array(infer_X); infer_Y = np.array(infer_Y); infer_Z = np.array(infer_Z); infer_WALL_D = np.array(infer_WALL_D)
+            infer_U_pred = np.array(infer_U_pred); infer_V_pred = np.array(infer_V_pred); infer_W_pred = np.array(infer_W_pred)
+            infer_P_pred = np.array(infer_P_pred); infer_T_pred = np.array(infer_T_pred)
+            infer_U_true = np.array(infer_U_true); infer_V_true = np.array(infer_V_true); infer_W_true = np.array(infer_W_true)
+            infer_P_true = np.array(infer_P_true); infer_T_true = np.array(infer_T_true)
+            
+            # 打印确认
+            logger.info("\n📊 【内嵌推理】数据范围检查 (无量纲):")
+            logger.info(f"   U_pred: {infer_U_pred.min():.6f} ~ {infer_U_pred.max():.6f}")
+            logger.info(f"   V_pred: {infer_V_pred.min():.6f} ~ {infer_V_pred.max():.6f}")
+            logger.info(f"   P_pred: {infer_P_pred.min():.6f} ~ {infer_P_pred.max():.6f}")
+            if infer_U_pred.min() != infer_U_pred.max():
+                logger.info("✅ 确认：网络输出不是常数，有空间分布！")
+            
+            # 有量纲化
+            Vel_pred = np.sqrt(infer_U_pred**2 + infer_V_pred**2 + infer_W_pred**2) * U0_val
+            P_pred = infer_P_pred * q0_val + P0
+            T_pred = infer_T_pred * T0
+            c_pred = np.sqrt(GAMMA * R_gas * T_pred)
+            Ma_pred = Vel_pred / (c_pred + 1e-12)
+            
+            Vel_true = np.sqrt(infer_U_true**2 + infer_V_true**2 + infer_W_true**2) * U0_val
+            P_true = infer_P_true * q0_val + P0
+            T_true = infer_T_true * T0
+            
+            X_dim = infer_X * L
+            
+            # 创建专门的推理结果文件夹
+            infer_save_root = f'{project_root}/outputs/推理结果/{current_datetime}_内嵌推理'
+            os.makedirs(infer_save_root, exist_ok=True)
+            
+            # 绘图参数
+            plot_vars = [("Velocity", Vel_pred, Vel_true, "m/s"), 
+                         ("Static_P", P_pred, P_true, "Pa"), 
+                         ("Mach", Ma_pred, Ma_true, "-")]
+            
+            # 聚类切片
+            from scipy.cluster.hierarchy import fclusterdata
+            import matplotlib.tri as tri
+            from matplotlib import cm
+            
+            X_TOL = 1e-4
+            WALL_DIST_MAX_INFER = 0.6
+            
+            clusters = fclusterdata(X_dim.reshape(-1,1), t=X_TOL, criterion='distance')
+            cluster_ids = np.unique(clusters)
+            
+            logger.info(f"开始绘图，共 {len(cluster_ids)} 个截面...")
+            
+            for cid in cluster_ids:
+                mask = clusters == cid
+                X_sec = X_dim[mask]
+                Y_sec = infer_Y[mask]
+                Z_sec = infer_Z[mask]
+                WALL_D_sec = infer_WALL_D[mask]
+                
+                if len(X_sec) < 50: continue
+                
+                # 流体域过滤
+                fluid_mask = (WALL_D_sec <= WALL_DIST_MAX_INFER) & (WALL_D_sec >= 0) & (~np.isnan(WALL_D_sec))
+                Y_fluid = Y_sec[fluid_mask]
+                Z_fluid = Z_sec[fluid_mask]
+                WALL_D_fluid = WALL_D_sec[fluid_mask]
+                
+                if len(Y_fluid) < 50: continue
+                
+                for name, val_pred, val_true, unit in plot_vars:
+                    v_pred_fluid = val_pred[mask][fluid_mask]
+                    v_true_fluid = val_true[mask][fluid_mask]
+                    
+                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 6), dpi=150)
+                    triang = tri.Triangulation(Y_fluid, Z_fluid)
+                    
+                    # 简单的掩码剔除坏三角形
+                    triangles = triang.triangles
+                    pts = np.column_stack([Y_fluid, Z_fluid])
+                    y_tri = pts[triangles, 0]
+                    z_tri = pts[triangles, 1]
+                    a = np.sqrt((y_tri[:, 1] - y_tri[:, 0])**2 + (z_tri[:, 1] - z_tri[:, 0])**2)
+                    b = np.sqrt((y_tri[:, 2] - y_tri[:, 1])**2 + (z_tri[:, 2] - z_tri[:, 1])**2)
+                    c = np.sqrt((y_tri[:, 0] - y_tri[:, 2])**2 + (z_tri[:, 0] - z_tri[:, 2])**2)
+                    s = (a + b + c) / 2.0
+                    area = np.sqrt(np.clip(s * (s - a) * (s - b) * (s - c), 0, None))
+                    area[area < 1e-12] = 1e-12
+                    scale = np.max([np.max(Y_fluid) - np.min(Y_fluid), np.max(Z_fluid) - np.min(Z_fluid)])
+                    circum_r = (a * b * c) / (4.0 * area)
+                    mask_alpha = circum_r > (scale / 1.0)
+                    triang.set_mask(mask_alpha)
+                    
+                    ax1.tricontourf(triang, v_pred_fluid, 80, cmap=cm.jet)
+                    ax1.set_title(f"Prediction | {name}")
+                    ax2.tricontourf(triang, v_true_fluid, 80, cmap=cm.jet)
+                    ax2.set_title(f"Ground Truth | {name}")
+                    ax1.set_aspect('equal')
+                    ax2.set_aspect('equal')
+                    plt.savefig(f"{infer_save_root}/X_{np.mean(X_sec):.4f}m_{name}_Compare.png")
+                    plt.close()
+            
+            logger.info(f"✅ 内嵌推理绘图全部完成！保存在: {infer_save_root}")
+
     logger.info("训练全部完成")
 
 # 保存模型权重
