@@ -2,6 +2,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import os,sys
+import gc
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), './..'))
 sys.path.append(project_root)
 
@@ -47,3 +48,5 @@ def allgraph(current_datetime,epoches,train_losses,res_cont_epoches,res_mx_epoch
     
     plt.savefig(f'{project_root}/outputs/训练与性能情况/{current_datetime}/参数曲线.png')
     plt.clf()
+    plt.close('all')   # 关闭所有画布，释放内存
+    gc.collect() 

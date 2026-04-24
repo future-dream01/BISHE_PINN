@@ -143,7 +143,7 @@ def data(device, output, label):
     loss_K=MSE(K, K_t)+L1(K, K_t)
     loss_Omega=MSE(Omega, Omega_t)+L1(Omega, Omega_t)
 
-    data_loss=loss_U+loss_V+loss_W+loss_P+loss_T+5*loss_K+5*loss_Omega
+    data_loss=loss_U+loss_V+loss_W+loss_P+loss_T+5*loss_K+10*loss_Omega
 
     return data_loss
     
@@ -279,7 +279,7 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_r
     loss_cont,loss_mom,loss_energy,loss_k,loss_omega,loss_bon,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega = loss_PDE_and_bon(L,M0,T0,P0,input,output_final,data_min,data_max)
 
     w_data = 1 
-    w_pde = 0.0001    
+    #w_pde = 0.0001    
       
     if epoch < PDEloss_start_epoch: # 第一阶段 纯数据拟合
         w_pde = 0
@@ -289,28 +289,28 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_r
         w_k = 0.0
         w_omega = 0.0
     
-    if PDEloss_start_epoch<=epoch < 2*PDEloss_start_epoch:  # 第二阶段 加入连续、动量、能量方程
-        w_pde = sigmoid_schedule(epoch-PDEloss_start_epoch,PDEloss_start_epoch,1e-6,1e-4)
+    elif PDEloss_start_epoch<=epoch < 2*PDEloss_start_epoch:  # 第二阶段 加入连续、动量、能量方程
+        w_pde = sigmoid_schedule(epoch-PDEloss_start_epoch,PDEloss_start_epoch,1e-3,1e-1)
         w_cont = 1.0
         w_mom = 2.0
         w_energy = 1.5
         w_k = 0
         w_omega = 0
     
-    if 2*PDEloss_start_epoch<=epoch < 3*PDEloss_start_epoch : # 第三阶段 加入K方程
-        w_pde=1e-4
+    elif 2*PDEloss_start_epoch<=epoch < 3*PDEloss_start_epoch : # 第三阶段 加入K方程
+        w_pde=sigmoid_schedule(epoch-PDEloss_start_epoch,PDEloss_start_epoch,1e-1,1e0)
         w_cont = 1.0
         w_mom = 2.0
         w_energy = 1.5
-        w_k = 0.1
+        w_k = 10
         w_omega = 0
 
     else:
-        w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e-4,2e-4)
+        w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e0,1e1)
         w_cont = 1.0
         w_mom = 2.0
         w_energy = 1.5
-        w_k = 0.1         
+        w_k = 10      
         w_omega = 0.0002    
 
     # 计算加权后的PDE总损失
