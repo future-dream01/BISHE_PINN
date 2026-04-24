@@ -46,8 +46,6 @@ class PerceptualLoss(nn.Module):
                 features[layer_name] = x
         return features
 
-
-
 # PSNR计算
 def psnr(img1, img2, max_val=255.0):
     """
@@ -108,14 +106,14 @@ def ssim(img1, img2, max_val=1.0, window_size=11, sigma=1.5):
     ssim = ssim_map.mean()
     return ssim.cpu()
 
-
+# 通过残差计算残差损失
 def huber_pde_loss(residual, delta=0.1):
     abs_res = torch.abs(residual)
     quadratic = torch.clamp(abs_res, max=delta)
     linear = abs_res - quadratic
     return torch.mean(0.5 * quadratic**2 + delta * linear)
 
-
+# 数据拟合损失
 def data(device, output, label):
     U=output[:,0:1]  # 无量纲x方向速度
     V=output[:,1:2]  # 无量纲y方向速度
@@ -147,10 +145,6 @@ def data(device, output, label):
 
     return data_loss
     
-
-
-
-
 # MSE损失
 def loss_MSE(device, output, label):
     MSE = nn.MSELoss().to(device)
@@ -169,7 +163,7 @@ def loss_criterion(device, output, label):
     loss = criterion(output, label)
     return loss
 
-
+# PDE方程残差和边界损失
 def loss_PDE_and_bon(L,M0,T0,P0,input,output,data_min,data_max):
     PDE=RANS_PDE(L,M0,T0,P0,input,output,data_min,data_max)
     # 获取原始残差
@@ -189,20 +183,7 @@ def loss_PDE_and_bon(L,M0,T0,P0,input,output,data_min,data_max):
 
 
 # 反归一化函数
-def denormalize_for_pde(output_raw, data_min, data_max):
-    """
-    将网络输出的 [0, 1] 归一化值还原回物理空间，用于计算 PDE 残差。
-    全程使用 Torch 操作，保证计算图不中断，可反向传播。
-    
-    参数:
-        output_raw: [Batch, 7] 网络直接输出 (Sigmoid 后 [0, 1])
-        input_min: [11] 归一化参数数组 (Torch Tensor)
-        input_max: [11] 归一化参数数组 (Torch Tensor)
-        
-    返回:
-        output_final: [Batch, 7] 物理空间无量纲值
-    """
-    device = output_raw.device
+def denormalize_for_pde(device,output_raw, data_min, data_max):
     
     # 确保统计量在同一设备上
     dm = data_min.to(device)
@@ -212,37 +193,23 @@ def denormalize_for_pde(output_raw, data_min, data_max):
     out_min = dm[4:11]
     out_max = dmx[4:11]
     
-    # ==========================================
-    # 第一步：通用线性反归一化 (所有变量)
-    # ==========================================
-    # 此时 out_linear 的形状为 [Batch, 7]
-    # 其中:
-    # out_linear[:, 0:4] 是 U, V, W, P, T 的物理值
-    # out_linear[:, 5] 是 ln(K)
-    # out_linear[:, 6] 是 ln(Omega)
+    # 先统一线性反归一化
     out_linear = output_raw * (out_max - out_min + 1e-8) + out_min
     
-    # ==========================================
-    # 第二步：分别处理
-    # ==========================================
-    
-    # 1. 提取前 5 个变量 (U, V, W, P, T)，它们已经是最终物理值了
+    # 提取前5个变量，已经是无量纲的了
     out_uvwpt = out_linear[:, 0:5]
     
-    # 2. 处理 K (索引 5)
-    # 先钳位防止 exp 爆炸，然后 exp 还原
+    # 单独处理K
     k_ln = out_linear[:, 5:6]
     k_ln_clamped = torch.clamp(k_ln, min=-20.0, max=20.0) # 安全范围
     k = torch.exp(k_ln_clamped)
     
-    # 3. 处理 Omega (索引 6)
+    # 单独处理Omega
     omega_ln = out_linear[:, 6:7]
     omega_ln_clamped = torch.clamp(omega_ln, min=-20.0, max=20.0)
     omega = torch.exp(omega_ln_clamped)
     
-    # ==========================================
-    # 第三步：安全拼接 (不使用 in-place 操作，保护计算图)
-    # ==========================================
+    # 拼接回输出向量
     output_final = torch.cat([out_uvwpt, k, omega], dim=1)
 
     logger.info(f"   反归一化之后的U范围: {output_final[:,0:1].min().item():.6f} ~ {output_final[:,0:1].max().item():.6f}")
@@ -255,32 +222,27 @@ def denormalize_for_pde(output_raw, data_min, data_max):
     
     return output_final
 
+# 平滑增加权重函数 使用sigmoid作为基函数
 def sigmoid_schedule(t, T, start_val, end_val):
-    """
-    平滑的 Sigmoid 过渡：两头慢，中间快
-    """
-    if t >= T:
-        return end_val
-    
-    # 将 t/T 映射到 [-6, 6]，sigmoid 在这个区间内从 ~0 变到 ~1
     x = 12 * (t / T - 0.5) 
     sigma = 1 / (1 + np.exp(-x))
     
     return start_val + (end_val - start_val) * sigma
 
-# 训练集总损失（epoch476+ 精准微调版）
+# 训练集总损失
 def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max):
     
+    # 利用归一化量计算数据拟合损失
     loss_data=data(device, output_raw, label)
-    # 获取所有单项损失
 
-    output_final=denormalize_for_pde(output_raw,data_min,data_max)
+    # 反归一化
+    output_final=denormalize_for_pde(device,output_raw,data_min,data_max)
 
+    # 利用无量纲量计算PDE残差损失
     loss_cont,loss_mom,loss_energy,loss_k,loss_omega,loss_bon,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega = loss_PDE_and_bon(L,M0,T0,P0,input,output_final,data_min,data_max)
 
+    # 权重设置
     w_data = 1 
-    #w_pde = 0.0001    
-      
     if epoch < PDEloss_start_epoch: # 第一阶段 纯数据拟合
         w_pde = 0
         w_cont = 0.0
@@ -305,7 +267,7 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_r
         w_k = 10
         w_omega = 0
 
-    else:
+    else:  # 第四阶段 加入Omega方程
         w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e0,1e1)
         w_cont = 1.0
         w_mom = 2.0

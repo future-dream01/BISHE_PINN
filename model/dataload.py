@@ -74,15 +74,6 @@ class Train_Dataset(Dataset):
         # 保存归一化后的输出
         self.outputs_normalized = outputs_norm
 
-        # 打印日志确认
-        print(f"\n✅ 训练集加载完成：{self.csv_path}")
-        print(f"   输入范围 (X,Y,Z,d): {in_min_4} ~ {in_max_4}")
-        print(f"   输出 K 原始范围: {k_raw.min():.2e} ~ {k_raw.max():.2e}")
-        print(f"   输出 K 对数范围: {ln_k_min:.4f} ~ {ln_k_max:.4f}")
-        print(f"   输出 Omega 原始范围: {omega_raw.min():.2f} ~ {omega_raw.max():.2f}")
-        print(f"   输出 Omega 对数范围: {ln_omega_min:.4f} ~ {ln_omega_max:.4f}")
-        print(f"   实际采样数据点数: {len(self.inputs)}")
-
     def __len__(self):
         return len(self.inputs)
 
@@ -114,20 +105,20 @@ class Val_Dataset(Dataset):
         # 2. 输出归一化
         outputs_norm = np.zeros_like(self.outputs)
         
-        # 2.1 U, V, W, P, T (0-4)
+        # U, V, W, P, T (0-4)归一化
         for i in range(5):
             c_min = self.input_min[4 + i]
             c_max = self.input_max[4 + i]
             outputs_norm[:, i] = (self.outputs[:, i] - c_min) / (c_max - c_min + 1e-8)
             
-        # 2.2 K (输出索引5，总索引9)：先取 ln，再用训练集的 ln_min/max
+        # K 归一化
         k_raw = self.outputs[:, 5]
         ln_k = np.log(k_raw + 1e-12)
         ln_k_min = self.input_min[9]
         ln_k_max = self.input_max[9]
         outputs_norm[:, 5] = (ln_k - ln_k_min) / (ln_k_max - ln_k_min + 1e-8)
         
-        # 2.3 Omega (输出索引6，总索引10)
+        # Omega归一化
         omega_raw = self.outputs[:, 6]
         ln_omega = np.log(omega_raw + 1e-12)
         ln_omega_min = self.input_min[10]

@@ -1,7 +1,7 @@
 import os, sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), './..'))
 sys.path.append(project_root)
-from model import PINN,data_prepare, train_loss_TOTAL,val_loss_TOTAL,psnr,ssim,allgraph,hard_consrain
+from model import PINN,data_prepare, train_loss_TOTAL,val_loss_TOTAL,psnr,ssim,allgraph,hard_consrain,denormalize_for_pde
 import torch.optim as optim
 from loguru import logger
 from datetime import datetime
@@ -165,7 +165,7 @@ def train():
         res_omega_epoches.append(res_omega_epoch)
 
         # 训练参数打印
-        logger.info(f"epoch:{epoch},")
+        logger.info(f"epoch:{epoch}")
         logger.info(f"train_loss_average:{train_loss_epoch}")
         logger.info(f"Res_cont_average:{res_cont_epoch}")
         logger.info(f"Res_mx_average:{res_mx_epoch}")
@@ -188,21 +188,12 @@ def train():
                 input, label = input.to(device), label.to(device)
                 optimizer_M.zero_grad()  # 梯度归零
                 output_raw = M(input)
-                logger.info(f"   验证集数据范围:")
-                logger.info(f"   U范围: {output_raw[:, 0].min().item():.6f} ~ {output_raw[:, 0].max().item():.6f}")
-                logger.info(f"   V范围: {output_raw[:, 1].min().item():.6f} ~ {output_raw[:, 1].max().item():.6f}")
-                logger.info(f"   W范围: {output_raw[:, 2].min().item():.6f} ~ {output_raw[:, 2].max().item():.6f}")
-                logger.info(f"   P范围: {output_raw[:, 3].min().item():.6f} ~ {output_raw[:, 3].max().item():.6f}")
-                logger.info(f"   T范围: {output_raw[:, 4].min().item():.6f} ~ {output_raw[:, 4].max().item():.6f}")
-                logger.info(f"   K范围: {output_raw[:, 5].min().item():.6f} ~ {output_raw[:, 5].max().item():.6f}")
-                logger.info(f"   Omega范围: {output_raw[:, 6].min().item():.6f} ~ {output_raw[:, 6].max().item():.6f}")
                 # input_sym=input.clone()                              # 构造对称输入
                 # input_sym[:,2:3]=-input_sym[:,2:3]
                 # input_sym=input_sym.detach()
                 # output_raw_sym=M(input_sym)
                 # output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
                 val_loss_batch = val_loss_TOTAL(device, output_raw, label)  # 计算验证集损失
-
                 val_batches += 1  # 本轮验证集已经迭代的批次数
                 # 打印验证集参数
                 logger.info(f"epoch:{epoch},batch:{val_batches},\n loss:{val_loss_batch.item()} ")
