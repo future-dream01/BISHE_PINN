@@ -32,7 +32,7 @@ BATCHSIZE = 1024
 # ==========================================
 # 【修改这里】切换到你新训的权重路径
 # ==========================================
-weight_name = "04-24_15-12/239weights"  # 🔧 改成你新的文件夹名
+weight_name = "04-25_00-07/2000weights"  # 🔧 改成你新的文件夹名
 weight_PATH = f'{project_root}/outputs/weights/{weight_name}.pth'
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -136,10 +136,10 @@ def infer_all_dataset():
             output_norm = model(input_batch)
             
             # 2. 预测值反归一化 -> 物理空间无量纲
-            output_pred_phys = denormalize_for_pde(output_norm, data_min, data_max)
+            output_pred_phys = denormalize_for_pde(device,output_norm, data_min, data_max)
             
             # 3. 真值反归一化 -> 物理空间无量纲 (必须和预测值用完全一样的逻辑!)
-            output_true_phys = denormalize_for_pde(target_batch, data_min, data_max)
+            output_true_phys = denormalize_for_pde(device,target_batch, data_min, data_max)
 
             # 打印第一批数据确认
             if first_batch:
