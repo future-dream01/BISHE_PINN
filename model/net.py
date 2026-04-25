@@ -224,12 +224,11 @@ class Resn_Conv(nn.Module):
 ##################################### 全连接 ###################################
 # 全连接神经网络骨架
 # 全连接神经网络骨架
-class Backbone_Lin(nn.Module):
+class Backbone_Lin_XYZD(nn.Module):
     def __init__(self):
-        super(Backbone_Lin,self).__init__()
+        super(Backbone_Lin_XYZD,self).__init__()
         self.silu=nn.SiLU()
         self.sigmoid=nn.Sigmoid()
-        self.softplus=nn.Softplus()
         self.Lin1=nn.Linear(4,64)
         self.Lin2=nn.Linear(64,128)
         self.Lin3=nn.Linear(128,256)
@@ -253,8 +252,39 @@ class Backbone_Lin(nn.Module):
         x=self.Lin5(x)
         x=self.silu(x)
         x=self.Lin6(x)
-        x=self.sigmoid(x)
         return x
+
+class Backbone_Lin_MaPr(nn.model):
+    def __init__(self):
+        super(Backbone_Lin_MaPr,self).__init__()
+        self.silu=nn.SiLU()
+        self.sigmoid=nn.Sigmoid()
+        self.Lin1=nn.Linear(2,32)
+        self.Lin2=nn.Linear(32,64)
+        self.Lin3=nn.Linear(64,128)
+        self.res1=Resn_Lin(128,128)
+        self.res2=Resn_Lin(128,128)
+        self.Lin4=nn.Linear(128,64)
+        self.Lin5=nn.Linear(64,32)
+        self.Lin6=nn.Linear(32,7)
+    
+    def forword(self,x):
+        x=self.Lin1(x)
+        x=self.silu(x)
+        x=self.Lin2(x)
+        x=self.silu(x)
+        x=self.Lin3(x)
+        x=self.silu(x)
+        x=self.res1(x)
+        x=self.res2(x)
+        x=self.Lin4(x)
+        x=self.silu(x)
+        x=self.Lin5(x)
+        x=self.silu(x)
+        x=self.Lin6(x)
+        return x 
+
+
 
 
 # 残差全连接模块

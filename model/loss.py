@@ -164,8 +164,8 @@ def loss_criterion(device, output, label):
     return loss
 
 # PDE方程残差和边界损失
-def loss_PDE_and_bon(L,M0,T0,P0,input,output,data_min,data_max):
-    PDE=RANS_PDE(L,M0,T0,P0,input,output,data_min,data_max)
+def loss_PDE_and_bon(device,L,T0,P0,input,output,data_min,data_max):
+    PDE=RANS_PDE(device,L,T0,P0,input,output,data_min,data_max)
     # 获取原始残差
     res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega=PDE.rans_res()
     # 残差计算MSE（只算单项，不加权，权重在外面动态加）
@@ -230,7 +230,7 @@ def sigmoid_schedule(t, T, start_val, end_val):
     return start_val + (end_val - start_val) * sigma
 
 # 训练集总损失
-def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max):
+def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,label,data_min,data_max):
     
     # 利用归一化量计算数据拟合损失
     loss_data=data(device, output_raw, label)
@@ -239,7 +239,7 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_r
     output_final=denormalize_for_pde(device,output_raw,data_min,data_max)
 
     # 利用无量纲量计算PDE残差损失
-    loss_cont,loss_mom,loss_energy,loss_k,loss_omega,loss_bon,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega = loss_PDE_and_bon(L,M0,T0,P0,input,output_final,data_min,data_max)
+    loss_cont,loss_mom,loss_energy,loss_k,loss_omega,loss_bon,res_cont,res_mx,res_my,res_mz,res_energy,res_k,res_omega = loss_PDE_and_bon(device,L,T0,P0,input,output_final,data_min,data_max)
 
     # 权重设置
     w_data = 1 
@@ -326,16 +326,8 @@ def hard_consrain(input_d,output,output_sym):
 
 # 残差损失
 class RANS_PDE():
-    def __init__(self,L,M0,T0,P0,input,output,data_min,data_max):  # (网络输出（无量纲化），网路输出（归一化），网络输入最大值，网络输入最小值)
+    def __init__(self,device,L,T0,P0,input,output,data_min,data_max):  # (网络输出（无量纲化），网路输出（归一化），网络输入最大值，网络输入最小值)
         # 无量纲化参数一、先明确两个概念的区别（避免混淆）
-        self.L=L        # 特征长度
-        self.M0=M0      # 来流马赫数
-        self.T0=T0      # 来流静温
-        self.P0=P0      # 来流静压
-        self.U0=M0*(1.4*287*T0)**0.5   # 来流速度
-        self.Rou0=P0/(287*T0)       # 来流密度
-        self.Miu0=(1.7894e-5)*((self.T0/288.15)**(1.5))*(288.15+110.4)/(self.T0+110.4)  # 来流动力粘度
-        self.Re0=(self.Rou0*self.U0*L)/self.Miu0  # 来流雷诺数
 
         # 近壁k-ω组常数
         self.alpha1 = 5/9
@@ -354,24 +346,38 @@ class RANS_PDE():
         self.Pr_t = 0.9    # 湍流普朗特数
         self.gamma = 1.4   # 空气比热比
 
-        
-        self.input=input
+        self.input=input  # 网络原始归一化输入
         self.output=output  # 无量纲输出 
-        min_d = data_min[3]  # 改个变量名，避免和内置函数 min 冲突
-        max_d = data_max[3]
-        
-        self.input_min_d = min_d.clone().detach().to("cuda").float()
-        self.input_max_d = max_d.clone().detach().to("cuda").float()
+
+        # 对d进行反归一化，得到无量纲d
+        input_min_d = data_min[3].clone().detach().to(device).float()
+        input_max_d = data_max[3].clone().detach().to(device).float()
         self.d_norm=torch.clamp(self.input[:,3:4] , min=1e-4)    # 归一化壁面距离d加防0保护
-        self.d = self.d_norm * (self.input_max_d - self.input_min_d + 1e-8) + self.input_min_d # 反归一化为无量纲d
+        self.d = self.d_norm * (input_max_d - input_min_d + 1e-8) + input_min_d # 反归一化为无量纲d
         self.d =torch.clamp(self.d,min=1e-4)           # 无量纲d加防0保护
         
+        # 对Ma进行反归一化
+        input_min_Ma=data_min[:,4:5].clone().detach().to(device).float()
+        input_max_Ma=data_min[:,4:5].clone().detach().to(device).float()
+        self.Ma_norm=self.input[:,4:5]
+        self.Ma = self.Ma_norm * (input_max_Ma - input_min_Ma + 1e-8) + input_min_Ma # 反归一化为马赫数
+        
+        # 计算缩放因子，用于自动求导换算
         min_xyzd=data_min[0:4]
         max_xyzd=data_max[0:4]
         self.input_min_xyzd = min_xyzd.clone().detach().to("cuda").float()
         self.input_max_xyzd = max_xyzd.clone().detach().to("cuda").float()
         self.scale = (self.input_max_xyzd - self.input_min_xyzd + 1e-8).reshape(1,4) # 缩放因子
-        #print(self.scale )
+
+        # 计算雷诺数,控制方程中唯一的影响参数
+        self.L=L        # 特征长度
+        self.T0=T0      # 来流静温
+        self.P0=P0      # 来流静压
+        self.U0=self.M0*(1.4*287*T0)**0.5   # 来流速度
+        self.Rou0=P0/(287*T0)       # 来流密度
+        self.Miu0=(1.7894e-5)*((self.T0/288.15)**(1.5))*(288.15+110.4)/(self.T0+110.4)  # 来流动力粘度
+        self.Re0=(self.Rou0*self.U0*L)/self.Miu0  # 来流雷诺数
+
     # 求导函数
     def grad(self,y,x):
         out=torch.autograd.grad(y.sum(),x,create_graph=True,retain_graph=True,allow_unused=True) [0]# 无量纲输出对无量纲输入的导数
@@ -529,4 +535,3 @@ class RANS_PDE():
         T = self.output[:, 4:5]
         dT_dd = self.grad(T, self.input)[:, 3:4]
         return dT_dd
-    

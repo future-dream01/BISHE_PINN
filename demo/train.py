@@ -15,7 +15,6 @@ import random
 
 # 无量纲参数设定
 L=0.095    # 特征长度
-M0=0.42    # 来流马赫数
 T0=249.15  # 来流静温
 P0=47181   # 来流静压
 
@@ -99,7 +98,7 @@ def train():
             # input_sym=input_sym.detach()
             # output_raw_sym=M(input_sym)    
             # output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
-            loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max)  # 计算损失
+            loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,label,data_min,data_max)  # 计算损失
 
             #loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max) 
 
