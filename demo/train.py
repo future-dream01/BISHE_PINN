@@ -1,7 +1,7 @@
 import os, sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), './..'))
 sys.path.append(project_root)
-from model import PINN,data_prepare, train_loss_TOTAL,val_loss_TOTAL,psnr,ssim,allgraph,hard_consrain,denormalize_for_pde
+from model import PINN_XYZD,data_prepare, train_loss_TOTAL,val_loss_TOTAL,psnr,ssim,allgraph,hard_consrain,denormalize_for_pde
 import torch.optim as optim
 from loguru import logger
 from datetime import datetime
@@ -39,7 +39,7 @@ def train():
     train_dataloader, val_dataloader ,data_min ,data_max= data_prepare(BATCHSIZE)        # 创建数据加载器对象
     data_min = torch.tensor(data_min, dtype=torch.float32).to(device)  # numpy张量转torch张量
     data_max = torch.tensor(data_max, dtype=torch.float32).to(device)
-    M = PINN()              # 创建模型对象
+    M = PINN_XYZD()              # 创建模型对象
     M.to(device)                                # 将模型转移到计算设备上
     optimizer_M = optim.Adam(M.parameters(), lr=0.001)    # 创建梯度优化器
     start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数

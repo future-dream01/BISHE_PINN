@@ -1,8 +1,9 @@
+# 整体网络模型
 import torch
 import torch.nn as nn
 from .net import *
 from loguru import logger
-class PINN(nn.Module):
+class PINN_XYZD(nn.Module):
     def __init__(self):
         super(PINN, self).__init__()        
         self.backbone = Backbone_Lin()
@@ -17,3 +18,5 @@ class PINN(nn.Module):
         logger.info(f"   网络输出的归一化K范围: {out[:,5:6].min().item():.6f} ~ {out[:,5:6].max().item():.6f}")
         logger.info(f"   网络输出的归一化Omega范围: {out[:,6:7].min().item():.6f} ~ {out[:,6:7].max().item():.6f}")
         return out
+    
+class 
