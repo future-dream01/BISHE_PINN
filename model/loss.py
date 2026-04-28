@@ -373,7 +373,7 @@ class RANS_PDE():
         self.L=L        # 特征长度
         self.T0=T0      # 来流静温
         self.P0=P0      # 来流静压
-        self.U0=self.M0*(1.4*287*T0)**0.5   # 来流速度
+        self.U0=self.Ma*(1.4*287*T0)**0.5   # 来流速度
         self.Rou0=P0/(287*T0)       # 来流密度
         self.Miu0=(1.7894e-5)*((self.T0/288.15)**(1.5))*(288.15+110.4)/(self.T0+110.4)  # 来流动力粘度
         self.Re0=(self.Rou0*self.U0*L)/self.Miu0  # 来流雷诺数

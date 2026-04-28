@@ -14,28 +14,33 @@ class Train_Dataset(Dataset):
         
         # 1. 读取CSV前3行（先读出来，我们会重新计算并覆盖，保持接口兼容）
         header_df = pd.read_csv(self.csv_path, nrows=3, header=None)
-        self.input_min = header_df.iloc[1, :].values.astype(np.float32)  # [11]
-        self.input_max = header_df.iloc[2, :].values.astype(np.float32)  # [11]
+        # 【修改】现在是13列，初始化长度为13
+        self.input_min = header_df.iloc[1, :].values.astype(np.float32)  # [13]
+        self.input_max = header_df.iloc[2, :].values.astype(np.float32)  # [13]
         
         # 2. 读取实际采样数据
         df = pd.read_csv(self.csv_path, skiprows=[1, 2])
-        self.inputs = df.iloc[:, :4].values.astype(np.float32)   # 输入：X,Y,Z,壁面距离
-        self.outputs = df.iloc[:, 4:].values.astype(np.float32) # 输出：U,V,W,P,T,K,Omega
+        # 【修改】输入：前6列 (X,Y,Z,d,Ma,Pr)
+        self.inputs = df.iloc[:, :6].values.astype(np.float32)   
+        # 【修改】输出：后7列 (U,V,W,P,T,K,Omega)
+        self.outputs = df.iloc[:, 6:].values.astype(np.float32) 
         
-        # ===================== 第一步：处理输入归一化 (X, Y, Z, d) =====================
-        in_min_4 = self.inputs.min(axis=0)
-        in_max_4 = self.inputs.max(axis=0)
-        self.inputs_normalized = (self.inputs - in_min_4) / (in_max_4 - in_min_4 + 1e-8)
+        # ===================== 第一步：处理输入归一化 (X, Y, Z, d, Ma, Pr) =====================
+        # 【修改】处理前6列输入
+        in_min_6 = self.inputs.min(axis=0)
+        in_max_6 = self.inputs.max(axis=0)
+        self.inputs_normalized = (self.inputs - in_min_6) / (in_max_6 - in_min_6 + 1e-8)
         
-        # 更新 input_min/max 的前4位
-        self.input_min[:4] = in_min_4
-        self.input_max[:4] = in_max_4
+        # 【修改】更新 input_min/max 的前6位
+        self.input_min[:6] = in_min_6
+        self.input_max[:6] = in_max_6
 
         # ===================== 第二步：处理输出归一化 (U, V, W, P, T, K, Omega) =====================
         # 创建一个临时数组存归一化后的 Label
         outputs_norm = np.zeros_like(self.outputs)
         
-        # --- 2.1 U, V, W, P, T (索引 0,1,2,3,4)：普通 Min-Max ---
+        # --- 2.1 U, V, W, P, T (输出索引 0,1,2,3,4)：普通 Min-Max ---
+        # 【修改】对应总索引 6,7,8,9,10
         for i in range(5):
             col_data = self.outputs[:, i]
             c_min = col_data.min()
@@ -43,11 +48,11 @@ class Train_Dataset(Dataset):
             
             outputs_norm[:, i] = (col_data - c_min) / (c_max - c_min + 1e-8)
             
-            # 更新 input_min/max 的对应位置 (总索引 4,5,6,7,8)
-            self.input_min[4 + i] = c_min
-            self.input_max[4 + i] = c_max
+            # 【修改】更新 input_min/max 的对应位置 (总索引 6,7,8,9,10)
+            self.input_min[6 + i] = c_min
+            self.input_max[6 + i] = c_max
             
-        # --- 2.2 K (输出索引 5，总索引 9)：对数归一化 ---
+        # --- 2.2 K (输出索引 5，总索引 11)：对数归一化 ---
         k_raw = self.outputs[:, 5]
         ln_k = np.log(k_raw + 1e-12) # 加极小值防止 log(0)
         ln_k_min = ln_k.min()
@@ -55,11 +60,11 @@ class Train_Dataset(Dataset):
         
         outputs_norm[:, 5] = (ln_k - ln_k_min) / (ln_k_max - ln_k_min + 1e-8)
         
-        # 更新 input_min/max 的第 9 位
-        self.input_min[9] = ln_k_min
-        self.input_max[9] = ln_k_max
+        # 【修改】更新 input_min/max 的第 11 位
+        self.input_min[11] = ln_k_min
+        self.input_max[11] = ln_k_max
         
-        # --- 2.3 Omega (输出索引 6，总索引 10)：对数归一化 ---
+        # --- 2.3 Omega (输出索引 6，总索引 12)：对数归一化 ---
         omega_raw = self.outputs[:, 6]
         ln_omega = np.log(omega_raw + 1e-12)
         ln_omega_min = ln_omega.min()
@@ -67,9 +72,9 @@ class Train_Dataset(Dataset):
         
         outputs_norm[:, 6] = (ln_omega - ln_omega_min) / (ln_omega_max - ln_omega_min + 1e-8)
         
-        # 更新 input_min/max 的第 10 位
-        self.input_min[10] = ln_omega_min
-        self.input_max[10] = ln_omega_max
+        # 【修改】更新 input_min/max 的第 12 位
+        self.input_min[12] = ln_omega_min
+        self.input_max[12] = ln_omega_max
         
         # 保存归一化后的输出
         self.outputs_normalized = outputs_norm
@@ -92,37 +97,41 @@ class Val_Dataset(Dataset):
         
         # 读取数据
         df = pd.read_csv(self.csv_path, skiprows=[1, 2])
-        self.inputs = df.iloc[:, :4].values.astype(np.float32)
-        self.outputs = df.iloc[:, 4:].values.astype(np.float32)
+        # 【修改】输入：前6列 (X,Y,Z,d,Ma,Pr)
+        self.inputs = df.iloc[:, :6].values.astype(np.float32)
+        # 【修改】输出：后7列 (U,V,W,P,T,K,Omega)
+        self.outputs = df.iloc[:, 6:].values.astype(np.float32)
         
         # ===================== 验证集：复用训练集参数 =====================
         
-        # 1. 输入归一化 (前4列)
-        in_min_4 = self.input_min[:4]
-        in_max_4 = self.input_max[:4]
-        self.inputs_normalized = (self.inputs - in_min_4) / (in_max_4 - in_min_4 + 1e-8)
+        # 1. 输入归一化 (前6列)
+        # 【修改】处理前6列
+        in_min_6 = self.input_min[:6]
+        in_max_6 = self.input_max[:6]
+        self.inputs_normalized = (self.inputs - in_min_6) / (in_max_6 - in_min_6 + 1e-8)
         
         # 2. 输出归一化
         outputs_norm = np.zeros_like(self.outputs)
         
-        # U, V, W, P, T (0-4)归一化
+        # U, V, W, P, T (输出索引 0-4，总索引 6-10)归一化
+        # 【修改】索引调整
         for i in range(5):
-            c_min = self.input_min[4 + i]
-            c_max = self.input_max[4 + i]
+            c_min = self.input_min[6 + i]
+            c_max = self.input_max[6 + i]
             outputs_norm[:, i] = (self.outputs[:, i] - c_min) / (c_max - c_min + 1e-8)
             
-        # K 归一化
+        # K 归一化 (输出索引 5，总索引 11)
         k_raw = self.outputs[:, 5]
         ln_k = np.log(k_raw + 1e-12)
-        ln_k_min = self.input_min[9]
-        ln_k_max = self.input_max[9]
+        ln_k_min = self.input_min[11]
+        ln_k_max = self.input_max[11]
         outputs_norm[:, 5] = (ln_k - ln_k_min) / (ln_k_max - ln_k_min + 1e-8)
         
-        # Omega归一化
+        # Omega归一化 (输出索引 6，总索引 12)
         omega_raw = self.outputs[:, 6]
         ln_omega = np.log(omega_raw + 1e-12)
-        ln_omega_min = self.input_min[10]
-        ln_omega_max = self.input_max[10]
+        ln_omega_min = self.input_min[12]
+        ln_omega_max = self.input_max[12]
         outputs_norm[:, 6] = (ln_omega - ln_omega_min) / (ln_omega_max - ln_omega_min + 1e-8)
         
         self.outputs_normalized = outputs_norm

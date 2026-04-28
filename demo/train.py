@@ -1,7 +1,7 @@
 import os, sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), './..'))
 sys.path.append(project_root)
-from model import PINN_XYZD,data_prepare, train_loss_TOTAL,val_loss_TOTAL,psnr,ssim,allgraph,hard_consrain,denormalize_for_pde
+from model import PINN,data_prepare, train_loss_TOTAL,val_loss_TOTAL,psnr,ssim,allgraph,hard_consrain,denormalize_for_pde
 import torch.optim as optim
 from loguru import logger
 from datetime import datetime
@@ -21,9 +21,9 @@ P0=47181   # 来流静压
 # 训练超参数设定
 EPOCHES = 2000    # 轮次数
 BATCHSIZE = 1024    # 批次数
-PDEloss_start_epoch=200  # 开始加入PDE残差损失的轮次
+PDEloss_start_epoch=500  # 开始加入PDE残差损失的轮次
 train_nan_loss=val_nan_loss=0   # 一轮中出现异常损失值的批次数量
-LOAD_CP=True    # 是否需要加载之前的检查点
+LOAD_CP=False    # 是否需要加载之前的检查点
 CP_PATH= f'{project_root}/outputs/weights/04-24_21-04/416weights.pth'    # 检查点权重文件绝对路径
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # 计算设备
 current_datetime = datetime.now().strftime("%m-%d_%H-%M")               # 当前时间
@@ -38,7 +38,7 @@ def train():
     train_dataloader, val_dataloader ,data_min ,data_max= data_prepare(BATCHSIZE)        # 创建数据加载器对象
     data_min = torch.tensor(data_min, dtype=torch.float32).to(device)  # numpy张量转torch张量
     data_max = torch.tensor(data_max, dtype=torch.float32).to(device)
-    M = PINN_XYZD()              # 创建模型对象
+    M = PINN()              # 创建模型对象
     M.to(device)                                # 将模型转移到计算设备上
     optimizer_M = optim.Adam(M.parameters(), lr=0.001)    # 创建梯度优化器
     start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数
@@ -89,6 +89,8 @@ def train():
             logger.info(f"   输入的归一化y坐标范围: {input[:, 1].min().item():.6f} ~ {input[:, 1].max().item():.6f}")
             logger.info(f"   输入的归一化z坐标范围: {input[:, 2].min().item():.6f} ~ {input[:, 2].max().item():.6f}")
             logger.info(f"   输入的归一化壁面距离范围: {input[:, 3].min().item():.6f} ~ {input[:, 3].max().item():.6f}")
+            logger.info(f"   输入的归一化马赫数: {input[:, 4].min().item():.6f} ~ {input[:, 3].max().item():.6f}")
+            logger.info(f"   输入的归一化压比: {input[:, 5].min().item():.6f} ~ {input[:, 3].max().item():.6f}")
             optimizer_M.zero_grad()  # 梯度归零
             # 前向传播
             #with autocast():
