@@ -254,7 +254,7 @@ class Backbone_Lin_XYZD(nn.Module):
         x=self.Lin6(x)
         return x
 
-class Backbone_Lin_MaPr(nn.model):
+class Backbone_Lin_MaPr(nn.Module):
     def __init__(self):
         super(Backbone_Lin_MaPr,self).__init__()
         self.silu=nn.SiLU()
@@ -268,7 +268,7 @@ class Backbone_Lin_MaPr(nn.model):
         self.Lin5=nn.Linear(64,32)
         self.Lin6=nn.Linear(32,7)
     
-    def forword(self,x):
+    def forward(self,x):
         x=self.Lin1(x)
         x=self.silu(x)
         x=self.Lin2(x)
@@ -284,22 +284,19 @@ class Backbone_Lin_MaPr(nn.model):
         x=self.Lin6(x)
         return x 
 
-
-
-
 # 残差全连接模块
 class Resn_Lin(nn.Module):
     def __init__(self,input_channel,output_channel):
         super(Resn_Lin,self).__init__()
         self.silu=nn.SiLU()  
-        self.lin1=nn.Linear(input_channel,256)
-        self.lin2=nn.Linear(256,256)
+        self.lin1=nn.Linear(input_channel,output_channel)
+        self.lin2=nn.Linear(output_channel,256)
         self.lin3=nn.Linear(256,256)
         self.lin4=nn.Linear(256,output_channel)
 
     def forward(self,x):
         base=self.lin1(x)
-        x=self.silu(x)
+        x=self.silu(base)
         x=self.lin2(x)
         x=self.silu(x)
         x=self.lin3(x)

@@ -15,7 +15,7 @@ class PINN_XYZD(nn.Module):
         return out
 
 # Ma、Pr网络分支
-class PINN_MaPr(nn.model):
+class PINN_MaPr(nn.Module):
     def __init__(self):
         super(PINN_MaPr,self).__init__()
         self.backbone=Backbone_Lin_MaPr()
@@ -24,7 +24,7 @@ class PINN_MaPr(nn.model):
         out=self.backbone(x)
         return out
     
-class PINN(nn.model):
+class PINN(nn.Module):
     def __init__(self):
         super(PINN,self).__init__()
         self.pinn_xyzd=PINN_XYZD()
@@ -35,7 +35,7 @@ class PINN(nn.model):
     def forward(self,x):
         out1=self.pinn_xyzd(x[:,0:4]) # X、Y、Z、D分支
         out2=self.pinn_mapr(x[:,4:6]) # Ma、Pr分支
-        out=torch.concat(out1,out2,dim=1)
+        out=torch.concat([out1,out2],dim=1)
         out=self.lin1(out)
         out=self.sigmoid(out)
         logger.info(f"   网络输出的归一化U范围: {out[:,0:1].min().item():.6f} ~ {out[:,0:1].max().item():.6f}")

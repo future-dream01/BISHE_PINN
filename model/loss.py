@@ -190,8 +190,8 @@ def denormalize_for_pde(device,output_raw, data_min, data_max):
     dmx = data_max.to(device)
     
     # 提取输出部分的统计量 (后7维: indices 4 to 10)
-    out_min = dm[4:11]
-    out_max = dmx[4:11]
+    out_min = dm[6:13]
+    out_max = dmx[6:13]
     
     # 先统一线性反归一化
     out_linear = output_raw * (out_max - out_min + 1e-8) + out_min
@@ -243,37 +243,37 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,
 
     # 权重设置
     w_data = 1 
-    if epoch < PDEloss_start_epoch: # 第一阶段 纯数据拟合
+    if epoch <=PDEloss_start_epoch: # 第一阶段 纯数据拟合
         w_pde = 0
         w_cont = 0.0
         w_mom = 0.0
         w_energy = 0.0
         w_k = 0.0
         w_omega = 0.0
-    
-    elif PDEloss_start_epoch<=epoch < 2*PDEloss_start_epoch:  # 第二阶段 加入连续、动量、能量方程
-        w_pde = sigmoid_schedule(epoch-PDEloss_start_epoch,PDEloss_start_epoch,1e-3,1e-1)
+
+    elif PDEloss_start_epoch<epoch <= 2*PDEloss_start_epoch:  # 第二阶段 加入连续、动量、能量方程
+        w_pde = sigmoid_schedule(epoch-PDEloss_start_epoch,PDEloss_start_epoch,0.1,1)
         w_cont = 1.0
         w_mom = 2.0
-        w_energy = 1.5
+        w_energy = sigmoid_schedule(epoch-PDEloss_start_epoch,PDEloss_start_epoch,1,5)
         w_k = 0
         w_omega = 0
-    
-    elif 2*PDEloss_start_epoch<=epoch < 3*PDEloss_start_epoch : # 第三阶段 加入K方程
-        w_pde=sigmoid_schedule(epoch-PDEloss_start_epoch,PDEloss_start_epoch,1e-1,1e0)
+
+    elif 2*PDEloss_start_epoch<epoch <= 3*PDEloss_start_epoch : # 第三阶段 加入K方程
+        w_pde=1
         w_cont = 1.0
         w_mom = 2.0
-        w_energy = 1.5
-        w_k = 10
+        w_energy = sigmoid_schedule(epoch-2*PDEloss_start_epoch,PDEloss_start_epoch,5,7)
+        w_k = sigmoid_schedule(epoch-2*PDEloss_start_epoch,PDEloss_start_epoch,1,6)
         w_omega = 0
 
     else:  # 第四阶段 加入Omega方程
-        w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e0,1e1)
+        w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1,2)
         w_cont = 1.0
         w_mom = 2.0
-        w_energy = 1.5
-        w_k = 10      
-        w_omega = 0.0002    
+        w_energy = 7
+        w_k = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,6,8)
+        w_omega = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e-9,2e-8)  
 
     # 计算加权后的PDE总损失
     loss_pde_unweighted = (
@@ -290,8 +290,9 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,
     total_loss = w_data * loss_data + w_pde*loss_pde
     logger.info(f"当前数据拟合损失权重：{w_data}")
     logger.info(f"当前PDE损失权重:{w_pde}")
-    logger.info(f"当前数据拟合损失: {w_data * loss_data.item():.6e} ")
-    logger.info(f"当前PDE残差损失: {loss_pde.item():.6e} ")
+    logger.info(f"当前数据拟合损失: {w_data * loss_data:.6e} ")
+    logger.info(f"当前PDE残差损失: {loss_pde:.6e} ")
+    logger.info(f"当前w_omega: {w_omega:.6e} ")
 
     return total_loss,res_cont.mean(),res_mx.mean(),res_my.mean(),res_mz.mean(),res_energy.mean(),res_k.mean(),res_omega.mean()
 
@@ -357,17 +358,17 @@ class RANS_PDE():
         self.d =torch.clamp(self.d,min=1e-4)           # 无量纲d加防0保护
         
         # 对Ma进行反归一化
-        input_min_Ma=data_min[:,4:5].clone().detach().to(device).float()
-        input_max_Ma=data_min[:,4:5].clone().detach().to(device).float()
+        input_min_Ma=data_min[4].clone().detach().to(device).float()
+        input_max_Ma=data_max[4].clone().detach().to(device).float()
         self.Ma_norm=self.input[:,4:5]
         self.Ma = self.Ma_norm * (input_max_Ma - input_min_Ma + 1e-8) + input_min_Ma # 反归一化为马赫数
         
         # 计算缩放因子，用于自动求导换算
-        min_xyzd=data_min[0:4]
-        max_xyzd=data_max[0:4]
+        min_xyzd=data_min[0:6]
+        max_xyzd=data_max[0:6]
         self.input_min_xyzd = min_xyzd.clone().detach().to("cuda").float()
         self.input_max_xyzd = max_xyzd.clone().detach().to("cuda").float()
-        self.scale = (self.input_max_xyzd - self.input_min_xyzd + 1e-8).reshape(1,4) # 缩放因子
+        self.scale = (self.input_max_xyzd - self.input_min_xyzd + 1e-8).reshape(1,6) # 缩放因子
 
         # 计算雷诺数,控制方程中唯一的影响参数
         self.L=L        # 特征长度
@@ -396,7 +397,7 @@ class RANS_PDE():
         #print(f"Omega:{Omega}")
 
         # 由网路输出导出的无量纲参数
-        gamma_M0_sq = self.gamma * (self.M0 ** 2)
+        gamma_M0_sq = self.gamma * (self.Ma ** 2)
         Rou = (1.0 + gamma_M0_sq * P) / T
         Miu=(T**1.5)*((1+110.4/self.T0)/(T+110.4/self.T0)) # 无量纲动力粘度
         
@@ -472,7 +473,7 @@ class RANS_PDE():
             (1/(self.Re0*self.Pr))*((self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dX,self.input)[:,0:1])+\
             (self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dY,self.input)[:,1:2])+\
             (self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dZ,self.input)[:,2:3]))-\
-            0.5*(self.gamma-1)*self.M0**2*(U*dP_dX+V*dP_dY+W*dP_dZ+Phi)
+            0.5*(self.gamma-1)*self.Ma**2*(U*dP_dX+V*dP_dY+W*dP_dZ+Phi)
         
         # 湍流动能K输运方程
         CD_k_omega=torch.maximum(((2*Rou*self.sigma_omega2)/(Omega+1e-12))*(dK_dX*dOmega_dX+dK_dY*dOmega_dY+dK_dZ*dOmega_dZ),torch.tensor(1e-20,device="cuda"))

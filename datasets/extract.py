@@ -39,6 +39,27 @@ near_wall_thresh_train = 0.005  # 有量纲阈值，单位m
 # 【核心函数区域】
 # ==========================================
 
+# 【核心修复1】新增：统一过滤逻辑函数
+# 保证算极值和采数据用的是同一套标准
+def filter_valid_points(points, point_data, x_inlet, x_outlet, T0, P0):
+    """
+    严格过滤有效点，和 get_global_stats 里的逻辑完全一致
+    """
+    # 1. X坐标范围过滤（加1e-8容忍浮点误差）
+    x_coords = points[:, 0]
+    in_x_range = (x_coords >= x_inlet - 1e-8) & (x_coords <= x_outlet + 1e-8)
+    
+    # 2. 物理量合理性过滤
+    temp_valid = point_data["TEMPERATURE"] > 0.8 * T0  # 温度不低于来流的80%
+    press_valid = point_data["PRESSURE"] > 0            # 压力不能为负
+    tke_valid = point_data["TKE"] >= 0                  # 湍动能不能为负
+    wall_dist_valid = point_data["WALL_DIST"] >= 0      # 壁面距离不能为负
+    
+    # 合并所有过滤条件
+    valid_mask = in_x_range & temp_valid & press_valid & tke_valid & wall_dist_valid
+    
+    return valid_mask
+
 # 统一无量纲化函数，直接使用外部 M0 和 Pr
 def nondimensionalize_data(points, point_data, L, U0, T0, P0, q0):
     df = pd.DataFrame({
@@ -67,20 +88,12 @@ def get_global_stats(target_block, L, U0, T0, P0, q0, x_inlet, x_outlet):
     data = target_block.point_data_to_cell_data(True).cell_data_to_point_data()
     
     # ==========================================
-    # 【核心修复1：强制过滤进气道内部点】
+    # 使用统一过滤逻辑
     # ==========================================
-    # 1. 只保留X在入口~出口之间的点
-    x_coords = data.points[:, 0]
-    in_x_range = (x_coords >= x_inlet) & (x_coords <= x_outlet)
-    
-    # 2. 物理量合理性过滤，排除无效点
-    temp_valid = data["TEMPERATURE"] > 0.8 * T0  # 温度不低于来流的80%
-    press_valid = data["PRESSURE"] > 0            # 压力不能为负
-    tke_valid = data["TKE"] >= 0                  # 湍动能不能为负
-    wall_dist_valid = data["WALL_DIST"] >= 0      # 壁面距离不能为负
-    
-    # 合并过滤条件
-    valid_mask = in_x_range & temp_valid & press_valid & tke_valid & wall_dist_valid
+    valid_mask = filter_valid_points(
+        data.points, data.point_data, 
+        x_inlet, x_outlet, T0, P0
+    )
     
     # 提取有效点
     valid_points = data.points[valid_mask]
@@ -152,14 +165,32 @@ def save_csv_with_header(df, file_path, global_min, global_max, columns):
     print(f"✅ 文件已保存：{file_path}")
     print(f"   格式：第1行=表头 | 第2行=无量纲全局MIN | 第3行=无量纲全局MAX | 第4行起=无量纲采样数据")
 
-# 分层采样函数
-def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio, L, U0, T0, P0, q0):
+# 【核心修复2】修改后的分层采样函数
+def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio, L, U0, T0, P0, q0, x_inlet, x_outlet):
+    # 先做统一过滤，只保留有效点
+    valid_mask = filter_valid_points(
+        slice_data.points, 
+        slice_data.point_data, 
+        x_inlet, x_outlet, T0, P0
+    )
+    
+    # 提取过滤后的有效点
+    valid_points = slice_data.points[valid_mask]
+    valid_point_data = {}
+    for key in slice_data.point_data.keys():
+        valid_point_data[key] = slice_data.point_data[key][valid_mask]
+    
+    if len(valid_points) == 0:
+        return pd.DataFrame()
+    
+    # 只对有效点做无量纲化
     df = nondimensionalize_data(
-        points=slice_data.points,
-        point_data=slice_data.point_data,
+        points=valid_points,
+        point_data=valid_point_data,
         L=L, U0=U0, T0=T0, P0=P0, q0=q0
     )
     
+    # 后面的采样逻辑保持不变
     near_thresh_nondim = near_thresh / L
     near_wall = df[df["壁面距离"] < near_thresh_nondim].copy()
     far_wall = df[df["壁面距离"] >= near_thresh_nondim].copy()
@@ -189,9 +220,9 @@ def visualize_sampling_points(slice_points, sampled_points, x_pos, set_name=""):
     plt.tight_layout()
     plt.show()
 
-# 截面处理函数
+# 【核心修复3】修改后的截面处理函数
 def process_sections(target_block, x_list, sample_counts, near_thresh, near_ratio, 
-                     L, U0, T0, P0, q0, set_name=""):
+                     L, U0, T0, P0, q0, x_inlet, x_outlet, set_name=""):
     all_data = []
     
     for idx, x_pos in enumerate(x_list):
@@ -205,9 +236,10 @@ def process_sections(target_block, x_list, sample_counts, near_thresh, near_rati
         slice_plane = slice_plane.point_data_to_cell_data(True).cell_data_to_point_data()
         current_samples = sample_counts[idx]
         
+        # 传入选参 x_inlet, x_outlet
         sampled_df = stratified_sampling(
             slice_plane, near_thresh, current_samples, near_ratio,
-            L, U0, T0, P0, q0
+            L, U0, T0, P0, q0, x_inlet, x_outlet
         )
 
         all_data.append(sampled_df)
@@ -278,16 +310,41 @@ def main():
         target_block, train_x, train_sample_counts,
         near_wall_thresh_train, near_wall_ratio_train,
         L, U0, T0, P0, q0,
+        x_inlet, x_outlet, # 传入这两个参数
         set_name="Train"
     )
     
     if not df_train.empty:
+        # 【核心修复4】最后再检查一遍，确保采样数据没有超出极值
+        print("\n" + "="*70)
+        print("【最终检查】采样数据范围 vs CSV极值范围")
+        print("="*70)
+        all_ok = True
+        for col in columns:
+            data_min = df_train[col].min()
+            data_max = df_train[col].max()
+            
+            # 允许1e-6的浮点误差
+            is_ok = (data_min >= global_min[col] - 1e-6) and (data_max <= global_max[col] + 1e-6)
+            status = "✅" if is_ok else "❌"
+            
+            if not is_ok:
+                all_ok = False
+            
+            print(f"   {status} {col:8s} | 采样: {data_min:.6f}~{data_max:.6f} | 极值: {global_min[col]:.6f}~{global_max[col]:.6f}")
+        
+        print("="*70)
+        if all_ok:
+            print("✅ 所有采样数据均在极值范围内！")
+        else:
+            print("⚠️  警告：部分数据超出范围，请检查！")
+        
         save_csv_with_header(df_train, output_train_csv, global_min, global_max, columns)
         print(f"   训练集总采样点数：{len(df_train)}")
 
     print("\n" + "="*70)
     print("所有任务完成！")
-    print(f"✅ 核心保证：所有极值、采样数据均来自进气道内部有效点，无量纲化逻辑完全统一，已新增 Ma/Pr 列")
+    print(f"✅ 核心保证：所有极值、采样数据均来自进气道内部有效点，无量纲化逻辑完全统一")
     print("="*70)
 
 if __name__ == "__main__":
