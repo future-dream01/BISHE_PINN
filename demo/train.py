@@ -22,10 +22,10 @@ P0=47181   # 来流静压
 # 训练超参数设定
 EPOCHES = 2000    # 轮次数
 BATCHSIZE = 1024    # 批次数
-PDEloss_start_epoch=200  # 开始加入PDE残差损失的轮次
+PDEloss_start_epoch=500  # 开始加入PDE残差损失的轮次
 train_nan_loss=val_nan_loss=0   # 一轮中出现异常损失值的批次数量
 LOAD_CP=True    # 是否需要加载之前的检查点
-CP_PATH= f'{project_root}/outputs/weights/04-24_21-04/416weights.pth'    # 检查点权重文件绝对路径
+CP_PATH= f'{project_root}/outputs/weights/04-27_12-53/1500weights.pth'    # 检查点权重文件绝对路径
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # 计算设备
 current_datetime = datetime.now().strftime("%m-%d_%H-%M")               # 当前时间
 log_file_path=f'{project_root}/outputs/训练与性能情况/{current_datetime}/损失日志.log'  # 训练日志文件的绝对路径
@@ -214,23 +214,23 @@ def train():
         ##################### 决定是否保存当前轮次 ###############################
         logger.info(f"第{epoch}轮验证集评估完成，开始判断是否保存本轮权重")
         if (epoch==start_epoch)and LOAD_CP==False:
-            save_checkpoint(M,optimizer_M,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
+            save_checkpoint(M,optimizer_M,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses, f'{project_root}/outputs/weights/{current_datetime}/best_{epoch}weights.pth')   # 保存当前模型权重的信息
             logger.info(f"第一轮权重已保存")
             min_val_loss= val_loss_epoch            # 初始化最小的验证集损失
             d_epoch_num = start_epoch             # 初始化效果最好的轮次数
-        if (epoch==EPOCHES):
+        elif (epoch==EPOCHES)or(epoch==PDEloss_start_epoch)or(epoch==2*PDEloss_start_epoch)or(epoch==3*PDEloss_start_epoch):
             save_checkpoint(M,optimizer_M,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
-            logger.info(f"最后一轮权重已保存")
+            logger.info(f"重要训练节点权重已保存")
         else:
             if val_loss_epoch < min_val_loss:
-                delpath=f'{project_root}/outputs/weights/{current_datetime}/{d_epoch_num}weights.pth' # 删除对应的权重
+                delpath=f'{project_root}/outputs/weights/{current_datetime}/best_{d_epoch_num}weights.pth' # 删除对应的权重
                 if os.path.exists(delpath):
                     os.remove(delpath)
                     logger.info(f"删除了先前的第{d_epoch_num}轮权重")
                 d_epoch_num=epoch                 # 更新效果最好的轮次数
                 min_val_loss= val_loss_epoch        # 更新最小的验证集
                 
-                save_checkpoint(M,optimizer_M,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses,  f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
+                save_checkpoint(M,optimizer_M,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses,  f'{project_root}/outputs/weights/{current_datetime}/best_{epoch}weights.pth')   # 保存当前模型权重的信息
                 logger.info(f"保存了当前的第{d_epoch_num}轮权重,最好效果为{min_val_loss}")
             else :
                 logger.info("不保存此轮权重")
