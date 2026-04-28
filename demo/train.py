@@ -36,11 +36,13 @@ def train():
     # 训练前备工作
     global train_nan_loss,val_nan_loss      
     train_dataloader, val_dataloader ,data_min ,data_max= data_prepare(BATCHSIZE)        # 创建数据加载器对象
+    logger.info(f"datamin:{data_min}")
+    logger.info(f"datamax:{data_max}")
     data_min = torch.tensor(data_min, dtype=torch.float32).to(device)  # numpy张量转torch张量
     data_max = torch.tensor(data_max, dtype=torch.float32).to(device)
     M = PINN()              # 创建模型对象
     M.to(device)                                # 将模型转移到计算设备上
-    optimizer_M = optim.Adam(M.parameters(), lr=0.001)    # 创建梯度优化器
+    optimizer_M = optim.Adam(M.parameters(), lr=0.00001)    # 创建梯度优化器
     start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数
     train_losses = []                           # 训练集损失
     res_cont_epoches=[]                         # 训练集连续方程残差
