@@ -20,7 +20,7 @@ P0=47181   # 来流静压
 
 # 训练超参数设定
 EPOCHES = 2000    # 轮次数
-BATCHSIZE = 1024    # 批次数
+BATCHSIZE = 6200    # 批次数
 PDEloss_start_epoch=500  # 开始加入PDE残差损失的轮次
 train_nan_loss=val_nan_loss=0   # 一轮中出现异常损失值的批次数量
 LOAD_CP=False    # 是否需要加载之前的检查点
@@ -42,7 +42,7 @@ def train():
     data_max = torch.tensor(data_max, dtype=torch.float32).to(device)
     M = PINN()              # 创建模型对象
     M.to(device)                                # 将模型转移到计算设备上
-    optimizer_M = optim.Adam(M.parameters(), lr=0.00001)    # 创建梯度优化器
+    optimizer_M = optim.Adam(M.parameters(), lr=0.001)    # 创建梯度优化器
     start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数
     train_losses = []                           # 训练集损失
     res_cont_epoches=[]                         # 训练集连续方程残差
@@ -54,6 +54,7 @@ def train():
     res_omega_epoches=[]                        # 训练集湍流比耗散率输方程残差
     val_losses=[]                               # 验证集损失
 
+    d_epoch_num=1
     # 是否加载先前的检查点文件
     if LOAD_CP:                                
         logger.info(f"正在加载模型文件")
@@ -119,6 +120,7 @@ def train():
             train_batches += 1  # 本轮次已迭代的批次总数更新
             # 每批次训练参数打印
             logger.info(f"epoch:{epoch},batch:{train_batches}")
+            logger.info(f"best_epoch:{d_epoch_num}")
             logger.info(f"loss:{train_loss_batch.item()}")
             logger.info(f"Res_cont:{res_cont_batch.item()}")
             logger.info(f"Res_mx:{res_mx_batch.item()}")
