@@ -20,7 +20,7 @@ P0=47181   # 来流静压
 
 # 训练超参数设定
 EPOCHES = 2000    # 轮次数
-BATCHSIZE = 6200    # 批次数
+BATCHSIZE = 6200 * torch.cuda.device_count() if torch.cuda.is_available() else 6200     # 多GPU
 PDEloss_start_epoch=500  # 开始加入PDE残差损失的轮次
 train_nan_loss=val_nan_loss=0   # 一轮中出现异常损失值的批次数量
 LOAD_CP=False    # 是否需要加载之前的检查点
@@ -42,6 +42,14 @@ def train():
     data_max = torch.tensor(data_max, dtype=torch.float32).to(device)
     M = PINN()              # 创建模型对象
     M.to(device)                                # 将模型转移到计算设备上
+    if torch.cuda.device_count() > 1:
+        M = torch.nn.DataParallel(M)  # 自动将Batch分配到各个GPU
+        logger.info(f"检测到 {torch.cuda.device_count()} 块GPU,已启用DataParallel并行训练")
+    else:
+        logger.info(f"使用单GPU训练")
+
+
+
     optimizer_M = optim.Adam(M.parameters(), lr=0.001)    # 创建梯度优化器
     start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数
     train_losses = []                           # 训练集损失
@@ -252,7 +260,7 @@ def train():
 def save_checkpoint(model,optimizer,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses,path):
     state={
         "epoch":epoch,
-        "model_state_dict":model.state_dict(),
+        "model_state_dict":model.module.state_dict() if hasattr(model, 'module') else model.state_dict(),
         "optimizer_state_dict":optimizer.state_dict(),
         "train_loss":train_losses,
         "res_cont_epoch":res_cont_epoches,
@@ -269,8 +277,12 @@ def save_checkpoint(model,optimizer,epoch,train_losses,res_cont_epoches,res_mx_e
 # 获取断点的轮次数、损失值
 def load_checkpoint(model,optimizer,path):
     if os.path.isfile(path):    # 判断是否存在该检查点权重文件
-        checkpoint=torch.load(path) # 加载该权重文件
-        model.load_state_dict(checkpoint['model_state_dict'])
+        checkpoint=torch.load(path, map_location=device) # 新增：map_location避免设备不匹配
+        # 新增：判断是否为DataParallel模型，用.module加载权重
+        if hasattr(model, 'module'):
+            model.module.load_state_dict(checkpoint['model_state_dict'])
+        else:
+            model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         start_epoch=checkpoint['epoch']
         train_losses=checkpoint['train_loss']

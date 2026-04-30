@@ -268,7 +268,7 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,
         w_omega = 0
 
     else:  # 第四阶段 加入Omega方程
-        w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1,2)
+        w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1,1.5)
         w_cont = 1.0
         w_mom = 2.0
         w_energy = 7
@@ -462,28 +462,28 @@ class RANS_PDE():
         # 能量方程
         Omu=((dW_dY-dV_dZ)**2+(dU_dZ-dW_dX)**2+(dV_dX-dU_dY)**2+1e-12)**0.5            # 涡量幅值,开防负保护
         arg2_1=(2*K**0.5)/(self.beta_star*Omega*self.d+1e-12) # 防0保护
-        arg2_2=(500)/(self.Re0*Rou*self.d**2*Omega+1e-12) # 防0保护
+        arg2_2=(500*Miu)/(self.Re0*Rou*self.d**2*Omega+1e-12) # 防0保护
         arg2=torch.maximum(arg2_1,arg2_2)     # 混合函数F2
         F2=torch.tanh(arg2**2)
-        Miu_t=(Rou*self.a1*K)/(self.Re0*(torch.maximum(self.a1*Omega,Omu*F2))+1e-12)       # 湍流粘度 分母开防0保护
+        Miu_t=(self.Re0*Rou*self.a1*K)/((torch.maximum(self.a1*Omega,Omu*F2))+1e-12)       # 湍流粘度 分母开防0保护
         Miu_t=torch.clamp(Miu_t,min=1e-20,max=1e4) # 防数值爆炸
-        Phi=((Miu+Miu_t)/self.Re0)*(2*(dU_dX)**2+(dV_dY)**2+2*(dW_dZ)**2+\
+        Phi=((Miu+Miu_t)/self.Re0)*(2*(dU_dX)**2+2*(dV_dY)**2+2*(dW_dZ)**2+\
             (dU_dY+dV_dX)**2+(dU_dZ+dW_dX)**2+(dV_dZ+dW_dY)**2-(2/3)*(dU_dX+dV_dY+dW_dZ)**2)         # 耗散函数
         Res_E=Rou*(U*(dT_dX)+V*(dT_dY)+W*(dT_dZ))-\
             (1/(self.Re0*self.Pr))*((self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dX,self.input)[:,0:1])+\
             (self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dY,self.input)[:,1:2])+\
             (self.grad((Miu+(self.Pr/self.Pr_t)*Miu_t)*dT_dZ,self.input)[:,2:3]))-\
-            0.5*(self.gamma-1)*self.Ma**2*(U*dP_dX+V*dP_dY+W*dP_dZ+Phi)
+            (self.gamma-1)*self.Ma**2*(U*dP_dX+V*dP_dY+W*dP_dZ+Phi)
         
         # 湍流动能K输运方程
         CD_k_omega=torch.maximum(((2*Rou*self.sigma_omega2)/(Omega+1e-12))*(dK_dX*dOmega_dX+dK_dY*dOmega_dY+dK_dZ*dOmega_dZ),torch.tensor(1e-20,device="cuda"))
         arg1_1=(K**0.5)/(self.beta_star*Omega*self.d+1e-12)
-        arg1_2=(500)/(self.Re0*Rou*self.d**2*Omega+1e-12)
+        arg1_2=(500*Miu)/(self.Re0*Rou*self.d**2*Omega+1e-12)
         arg1_3=(4*Rou*self.sigma_omega2*K)/(CD_k_omega*self.d**2+1e-12)
         arg1=torch.minimum(torch.maximum(arg1_1,arg1_2),arg1_3)
         F1=torch.tanh(arg1**4)
         sigma_k=F1*(self.sigma_k1)+(1-F1)*self.sigma_k2
-        P_k=torch.minimum(Miu_t*self.Re0*(2*dU_dX**2+2*dV_dY**2+2*dW_dZ**2+(dV_dX+dU_dY)**2+(dU_dZ+dW_dX)**2+(dV_dZ+dW_dY)**2-(2/3)*(dU_dX+dV_dY+dW_dZ)**2),(20*self.beta_star*Rou*K*Omega))
+        P_k=torch.minimum((Miu_t*Rou/self.Re0)*(2*dU_dX**2+2*dV_dY**2+2*dW_dZ**2+(dV_dX+dU_dY)**2+(dU_dZ+dW_dX)**2+(dV_dZ+dW_dY)**2-(2/3)*(dU_dX+dV_dY+dW_dZ)**2),(20*self.beta_star*Rou*K*Omega))
         Res_K=Rou*(U*dK_dX+V*dK_dY+W*dK_dZ)-P_k+(self.beta_star*Rou*K*Omega)-\
               (1/self.Re0)*(self.grad(((Miu+sigma_k*Miu_t)*dK_dX),self.input)[:,0:1]+\
               self.grad(((Miu+sigma_k*Miu_t)*dK_dY),self.input)[:,1:2]+\
@@ -493,7 +493,7 @@ class RANS_PDE():
         sigma_omega=F1*self.sigma_omega1+(1-F1)*self.sigma_omega2
         alpha=F1*self.alpha1+(1-F1)*self.alpha2
         beta=F1*self.beta1+(1-F1)*self.beta2
-        prod_term = alpha * ((Rou * P_k * self.Re0) / (Miu_t + 1e-12))
+        prod_term = alpha * ((Rou * P_k ) / (Miu_t + 1e-12))
         prod_term = torch.clamp(prod_term, min=-1e3, max=1e3) # 加限制
         Res_Omega=Rou*(U*dOmega_dX+V*dOmega_dY+W*dOmega_dZ)-prod_term+\
                   beta*Rou*Omega**2-((1/self.Re0)*\

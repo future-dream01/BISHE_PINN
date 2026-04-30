@@ -32,7 +32,7 @@ BATCHSIZE = 1024
 # ==========================================
 # 【修改这里】切换到你新训的权重路径
 # ==========================================
-weight_name = "04-25_00-07/2000weights"  # 🔧 改成你新的文件夹名
+weight_name = "best_700weights"  # 🔧 改成你新的文件夹名
 weight_PATH = f'{project_root}/outputs/weights/{weight_name}.pth'
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -47,6 +47,7 @@ logger.add(log_file_path, rotation="500 MB", level="INFO")
 # 绘图参数
 PLOT_VAR_LIST = ["Velocity", "Static_P", "Mach", "Total_P"]
 X_TOLERANCE = 1e-4
+MA_TOLERANCE = 1e-3  # 🔧 新增：Ma的匹配容差
 WALL_DIST_MAX = 0.6
 ALPHA_PARAM = 1.0
 
@@ -86,7 +87,7 @@ def infer_all_dataset():
     set_seed(42)
     logger.info("="*60)
     logger.info(f"🔥 开始推理，权重文件: {weight_name}")
-    logger.info(f"🔧 模式: 数据拟合 + K/Omega 对数反归一化")
+    logger.info(f"🔧 模式: 按「相同X坐标 + 相同Ma」分组绘图")
     logger.info("="*60)
 
     # 1. 加载数据
@@ -96,9 +97,14 @@ def infer_all_dataset():
     data_min = torch.tensor(data_min_np, dtype=torch.float32).to(device)
     data_max = torch.tensor(data_max_np, dtype=torch.float32).to(device)
     
+    # 🔧 修改：分别提取坐标(x,y,z,d)和Ma的反归一化参数
     in_min_4 = data_min[:4].cpu().numpy()
     in_max_4 = data_max[:4].cpu().numpy()
     in_range_4 = in_max_4 - in_min_4 + 1e-8
+    
+    in_min_Ma = data_min[4].cpu().numpy()
+    in_max_Ma = data_max[4].cpu().numpy()
+    in_range_Ma = in_max_Ma - in_min_Ma + 1e-8
 
     # 2. 加载模型
     model = PINN().to(device)
@@ -113,8 +119,8 @@ def infer_all_dataset():
     for param in model.parameters():
         param.requires_grad = False
 
-    # 全局存储
-    all_X, all_Y, all_Z, all_WALL_D = [], [], [], []
+    # 🔧 修改：全局存储增加 Ma
+    all_X, all_Y, all_Z, all_WALL_D, all_Ma = [], [], [], [], []
     # 预测值 (物理空间无量纲)
     all_U_pred, all_V_pred, all_W_pred, all_P_pred, all_T_pred, all_K_pred, all_Omega_pred = [], [], [], [], [], [], []
     # 真实值 (物理空间无量纲)
@@ -147,7 +153,7 @@ def infer_all_dataset():
                 logger.info("🔍 第一批数据诊断 (物理空间无量纲):")
                 logger.info(f"   Input shape: {input_batch.shape}")
                 logger.info(f"   Output shape: {output_pred_phys.shape}")
-                logger.info(f"   Input[0] (x,y,z,d): {input_batch[0, :].cpu().numpy()}")
+                logger.info(f"   Input[0] (x,y,z,d,Ma): {input_batch[0, :].cpu().numpy()}")
                 logger.info(f"   --- 预测值 ---")
                 logger.info(f"   Pred[0] (U,V,W,P,T,K,Omega): {output_pred_phys[0, :].cpu().numpy()}")
                 logger.info(f"   --- 真值 ---")
@@ -160,14 +166,16 @@ def infer_all_dataset():
             pred_np = output_pred_phys.cpu().numpy()
             true_np = output_true_phys.cpu().numpy()
 
-            # 反归一化坐标
-            input_denorm = input_np * in_range_4 + in_min_4
-            X, Y, Z, WALL_D = input_denorm[:, 0], input_denorm[:, 1], input_denorm[:, 2], input_denorm[:, 3]
+            # 🔧 修改：分别反归一化坐标和Ma
+            input_denorm_4 = input_np[:, :4] * in_range_4 + in_min_4
+            X, Y, Z, WALL_D = input_denorm_4[:, 0], input_denorm_4[:, 1], input_denorm_4[:, 2], input_denorm_4[:, 3]
+            
+            Ma = input_np[:, 4] * in_range_Ma + in_min_Ma  # 单独反归一化Ma
 
             # ==============================================
-            # 【核心修改 2/2】保存所有7个变量
+            # 【核心修改 2/2】保存所有7个变量 + Ma
             # ==============================================
-            all_X.extend(X); all_Y.extend(Y); all_Z.extend(Z); all_WALL_D.extend(WALL_D)
+            all_X.extend(X); all_Y.extend(Y); all_Z.extend(Z); all_WALL_D.extend(WALL_D); all_Ma.extend(Ma)
             
             # 预测值
             all_U_pred.extend(pred_np[:, 0]); all_V_pred.extend(pred_np[:, 1]); all_W_pred.extend(pred_np[:, 2])
@@ -180,7 +188,7 @@ def infer_all_dataset():
             all_K_true.extend(true_np[:, 5]); all_Omega_true.extend(true_np[:, 6])
 
     # 转为数组
-    all_X = np.array(all_X); all_Y = np.array(all_Y); all_Z = np.array(all_Z); all_WALL_D = np.array(all_WALL_D)
+    all_X = np.array(all_X); all_Y = np.array(all_Y); all_Z = np.array(all_Z); all_WALL_D = np.array(all_WALL_D); all_Ma = np.array(all_Ma)
     
     # 预测值
     all_U_pred = np.array(all_U_pred); all_V_pred = np.array(all_V_pred); all_W_pred = np.array(all_W_pred)
@@ -237,16 +245,30 @@ def infer_all_dataset():
     logger.info(f"{'Mach':<15} | {Ma_pred.min():<15.4f} | {Ma_pred.max():<15.4f} | {Ma_true.min():<15.4f} | {Ma_true.max():<15.4f} | {'-':<10}")
     logger.info("="*80 + "\n")
 
+    # 🔧 修改：按「相同X坐标 + 相同Ma」分组（使用容差避免浮点误差）
+    logger.info("正在按「X坐标 + Ma」分组...")
+    # 对X和Ma取整到指定小数位，实现容差匹配
+    X_rounded = np.round(X_dim / X_TOLERANCE) * X_TOLERANCE
+    Ma_rounded = np.round(all_Ma / MA_TOLERANCE) * MA_TOLERANCE
+    
+    # 构造唯一的 (X, Ma) 组合
+    x_ma_pairs = np.column_stack([X_rounded, Ma_rounded])
+    unique_pairs, inverse_indices = np.unique(x_ma_pairs, axis=0, return_inverse=True)
+    logger.info(f"✅ 共找到 {len(unique_pairs)} 组「X坐标 + Ma」组合")
+
     # 绘图
     logger.info("正在绘图...")
-    clusters = fclusterdata(X_dim.reshape(-1,1), t=X_TOLERANCE, criterion='distance')
-    cluster_ids = np.unique(clusters)
-    
-    for cid in cluster_ids:
-        mask = clusters == cid
-        X_sec = X_dim[mask]; Y_sec = all_Y[mask]; Z_sec = all_Z[mask]; WALL_D_sec = all_WALL_D[mask]
+    for i, (x_sec_rounded, ma_sec_rounded) in enumerate(unique_pairs):
+        mask = inverse_indices == i
+        X_sec = X_dim[mask]; Y_sec = all_Y[mask]; Z_sec = all_Z[mask]; WALL_D_sec = all_WALL_D[mask]; Ma_sec = all_Ma[mask]
         
-        if len(X_sec) < 50: continue
+        # 取该组的真实平均X和Ma（用于显示）
+        x_sec_mean = np.mean(X_sec)
+        ma_sec_mean = np.mean(Ma_sec)
+        
+        if len(X_sec) < 50: 
+            logger.info(f"⏭️  跳过组合 (X={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f})：点数不足50")
+            continue
         
         # 物理过滤
         fluid_mask = (WALL_D_sec <= WALL_DIST_MAX) & (WALL_D_sec >= 0) & (~np.isnan(WALL_D_sec))
@@ -259,16 +281,22 @@ def infer_all_dataset():
         P_true_fluid = P_true[mask][fluid_mask]
         Ma_pred_fluid = Ma_pred[mask][fluid_mask]
         Ma_true_fluid = Ma_true[mask][fluid_mask]
+        TP_pred_fluid = TP_pred[mask][fluid_mask]
+        TP_true_fluid = TP_true[mask][fluid_mask]
         
-        if len(Y_fluid) < 50: continue
+        if len(Y_fluid) < 50: 
+            logger.info(f"⏭️  跳过组合 (X={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f})：流体域点数不足50")
+            continue
 
         # 正常绘图
         data = {
             "Velocity": [Vel_pred_fluid, Vel_true_fluid],
             "Static_P": [P_pred_fluid, P_true_fluid],
-            "Mach": [Ma_pred_fluid, Ma_true_fluid]
+            "Mach": [Ma_pred_fluid, Ma_true_fluid],
+            "Total_P": [TP_pred_fluid, TP_true_fluid]  # 🔧 补充Total_P的数据源
         }
         
+        logger.info(f"🎨 正在绘制组合 (X={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f})...")
         for name in PLOT_VAR_LIST:
             if name not in data: continue
             val_pred, val_true = data[name]
@@ -279,12 +307,12 @@ def infer_all_dataset():
             
             # 绘制预测值
             cf1 = ax1.tricontourf(triang, val_pred, 80, cmap=cm.jet)
-            ax1.set_title(f"Prediction | {name}")
+            ax1.set_title(f"Prediction | {name} | Ma={ma_sec_mean:.4f}")
             ax1.set_aspect('equal')
             
             # 绘制真值
             cf2 = ax2.tricontourf(triang, val_true, 80, cmap=cm.jet)
-            ax2.set_title(f"Ground Truth | {name}")
+            ax2.set_title(f"Ground Truth | {name} | Ma={ma_sec_mean:.4f}")
             ax2.set_aspect('equal')
             
             # 添加图例
@@ -293,7 +321,8 @@ def infer_all_dataset():
             
             plt.tight_layout()
             
-            plt.savefig(f"{save_root}/X_{np.mean(X_sec):.4f}m_{name}_Compare.png")
+            # 🔧 修改：文件名增加Ma标识
+            plt.savefig(f"{save_root}/X_{x_sec_mean:.4f}m_Ma_{ma_sec_mean:.4f}_{name}_Compare.png")
             plt.close()
 
     logger.info(f"\n🎉 推理完成！结果保存在: {save_root}")
