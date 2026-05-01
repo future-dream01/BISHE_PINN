@@ -32,7 +32,7 @@ BATCHSIZE = 1024
 # ==========================================
 # 【修改这里】切换到你新训的权重路径
 # ==========================================
-weight_name = "best_700weights"  # 🔧 改成你新的文件夹名
+weight_name = "best_29weights"  # 🔧 改成你新的文件夹名
 weight_PATH = f'{project_root}/outputs/weights/{weight_name}.pth'
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

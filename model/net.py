@@ -229,6 +229,11 @@ class Backbone_Lin_XYZD(nn.Module):
         super(Backbone_Lin_XYZD,self).__init__()
         self.silu=nn.SiLU()
         self.sigmoid=nn.Sigmoid()
+        self.norm1=nn.LayerNorm(64)
+        self.norm2=nn.LayerNorm(128)
+        self.norm3=nn.LayerNorm(256)
+        self.norm4=nn.LayerNorm(128)
+        self.norm5=nn.LayerNorm(64)
         self.Lin1=nn.Linear(4,64)
         self.Lin2=nn.Linear(64,128)
         self.Lin3=nn.Linear(128,256)
@@ -236,20 +241,25 @@ class Backbone_Lin_XYZD(nn.Module):
         self.res2=Resn_Lin(256,256)
         self.Lin4=nn.Linear(256,128)
         self.Lin5=nn.Linear(128,64)
-        self.Lin6=nn.Linear(64,7)
+        self.Lin6=nn.Linear(64,10)
     
     def forward(self,x):
         x=self.Lin1(x)
+        #x=self.norm1(x)
         x=self.silu(x)
         x=self.Lin2(x)
+        #x=self.norm2(x)
         x=self.silu(x)
         x=self.Lin3(x)
+        #x=self.norm3(x)
         x=self.silu(x)
         x=self.res1(x)
-        x=self.res2(x)
+        #x=self.res2(x)
         x=self.Lin4(x)
+        #x=self.norm4(x)
         x=self.silu(x)
         x=self.Lin5(x)
+        #x=self.norm5(x)
         x=self.silu(x)
         x=self.Lin6(x)
         return x
@@ -259,6 +269,10 @@ class Backbone_Lin_MaPr(nn.Module):
         super(Backbone_Lin_MaPr,self).__init__()
         self.silu=nn.SiLU()
         self.sigmoid=nn.Sigmoid()
+        self.norm1=nn.LayerNorm(32)
+        self.norm2=nn.LayerNorm(64)
+        self.norm3=nn.LayerNorm(64)
+        self.norm4=nn.LayerNorm(32)
         self.Lin1=nn.Linear(2,32)
         self.Lin2=nn.Linear(32,64)
         self.Lin3=nn.Linear(64,128)
@@ -266,44 +280,45 @@ class Backbone_Lin_MaPr(nn.Module):
         self.res2=Resn_Lin(128,128)
         self.Lin4=nn.Linear(128,64)
         self.Lin5=nn.Linear(64,32)
-        self.Lin6=nn.Linear(32,7)
+        self.Lin6=nn.Linear(32,4)
     
     def forward(self,x):
         x=self.Lin1(x)
+        #x=self.norm1(x)
         x=self.silu(x)
         x=self.Lin2(x)
+        #x=self.norm2(x)
         x=self.silu(x)
         x=self.Lin3(x)
         x=self.silu(x)
         x=self.res1(x)
-        x=self.res2(x)
+        #x=self.res2(x)
         x=self.Lin4(x)
+        #x=self.norm3(x)
         x=self.silu(x)
         x=self.Lin5(x)
+        #x=self.norm4(x)
         x=self.silu(x)
         x=self.Lin6(x)
         return x 
 
 # 残差全连接模块
 class Resn_Lin(nn.Module):
-    def __init__(self,input_channel,output_channel):
-        super(Resn_Lin,self).__init__()
-        self.silu=nn.SiLU()  
-        self.lin1=nn.Linear(input_channel,output_channel)
-        self.lin2=nn.Linear(output_channel,256)
-        self.lin3=nn.Linear(256,256)
-        self.lin4=nn.Linear(256,output_channel)
+    def __init__(self, input_channel, hidden_channel=None):
+        super(Resn_Lin, self).__init__()
+        if hidden_channel is None:
+            hidden_channel = input_channel
+        self.silu = nn.SiLU()
+        # ✅ 维度自适应，绝对不能硬编码256
+        self.lin1 = nn.Linear(input_channel, hidden_channel)
+        self.lin2 = nn.Linear(hidden_channel, input_channel)
 
-    def forward(self,x):
-        base=self.lin1(x)
-        x=self.silu(base)
-        x=self.lin2(x)
-        x=self.silu(x)
-        x=self.lin3(x)
-        x=self.silu(x)
-        x=self.lin4(x)
-        x=self.silu(x)
-        out=x+base
-        out=self.silu(out)
+    def forward(self, x):
+        identity = x  # 残差恒等映射
+        out = self.lin1(x)
+        out = self.silu(out)
+        out = self.lin2(out)
+        # ✅ 残差连接前绝对不能加激活函数！
+        out = out + identity
+        out = self.silu(out)
         return out
-

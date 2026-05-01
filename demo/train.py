@@ -50,7 +50,7 @@ def train():
 
 
 
-    optimizer_M = optim.Adam(M.parameters(), lr=0.001)    # 创建梯度优化器
+    optimizer_M = optim.Adam(M.parameters(), lr=0.005)    # 创建梯度优化器
     start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数
     train_losses = []                           # 训练集损失
     res_cont_epoches=[]                         # 训练集连续方程残差
@@ -100,8 +100,8 @@ def train():
             logger.info(f"   输入的归一化y坐标范围: {input[:, 1].min().item():.6f} ~ {input[:, 1].max().item():.6f}")
             logger.info(f"   输入的归一化z坐标范围: {input[:, 2].min().item():.6f} ~ {input[:, 2].max().item():.6f}")
             logger.info(f"   输入的归一化壁面距离范围: {input[:, 3].min().item():.6f} ~ {input[:, 3].max().item():.6f}")
-            logger.info(f"   输入的归一化马赫数: {input[:, 4].min().item():.6f} ~ {input[:, 3].max().item():.6f}")
-            logger.info(f"   输入的归一化压比: {input[:, 5].min().item():.6f} ~ {input[:, 3].max().item():.6f}")
+            logger.info(f"   输入的归一化马赫数: {input[:, 4].min().item():.6f} ~ {input[:, 4].max().item():.6f}")
+            logger.info(f"   输入的归一化压比: {input[:, 5].min().item():.6f} ~ {input[:, 5].max().item():.6f}")
             optimizer_M.zero_grad()  # 梯度归零
             # 前向传播
             #with autocast():
