@@ -9,10 +9,10 @@ import matplotlib.pyplot as plt
 # 【参数设置区域】
 # ==========================================
 # --- 通用文件与物理参数 ---
-cas_path = "066D_A3_hermites08_banmo_042_101.cas"
+cas_path = "050D_A0_hermites08_banmo_066_107.cas"
 zone_id = 1  # 【关键】先运行一次，看打印的Zone列表，改成正确的流体域ID
 L = 0.095       # 特征长度
-M0 = 0.42       # 来流马赫数
+M0 = 0.66       # 来流马赫数
 T0 = 249.15     # 来流静温
 P0 = 47181      # 来流静压
 U0 = M0 * (1.4 * 287 * T0) ** 0.5
@@ -24,20 +24,20 @@ x_inlet = 0.297183   # 入口X坐标
 x_outlet = 0.515712  # 出口X坐标
 
 # --- 训练集参数 (Train) ---
-output_train_csv = "066D_A3_train.csv"
-samples_inlet = 5000
-samples_outlet = 5000
-N1_train = 5    # 0.297183 ~ 0.34
-N2_train = 15   # 0.34 ~ 0.47
-N3_train = 5    # 0.47 ~ 0.515712
+output_train_csv = "050D_A0_train.csv"
+samples_inlet = 3000
+samples_outlet = 3000
+N1_train = 3    # 0.297183 ~ 0.34
+N2_train = 10   # 0.34 ~ 0.47
+N3_train = 3    # 0.47 ~ 0.515712
 samples_train_section = 2000
 near_wall_ratio_train = 0.7
 near_wall_thresh_train = 0.005  # 有量纲阈值，单位m
 
 # --- 验证集参数 (Validation) ---
-output_val_csv = "066D_A3_val.csv"
-val_x_sections = [0.31, 0.38, 0.42, 0.49] 
-samples_val_section = 2000
+output_val_csv = "050D_A0_val.csv"
+val_x_sections = [0.31, 0.38, 0.4375, 0.49] 
+samples_val_section = 4000
 near_wall_ratio_val = 0.5
 near_wall_thresh_val = 0.005
 
