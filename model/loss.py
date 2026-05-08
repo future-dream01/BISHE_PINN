@@ -273,7 +273,7 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_r
         w_mom = 2.0
         w_energy = 7
         w_k = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,6,8)
-        w_omega = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e-9,2e-8)  
+        w_omega = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,2e-8,2e-6)  
 
     # 计算加权后的PDE总损失
     loss_pde_unweighted = (
@@ -292,7 +292,7 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_r
     logger.info(f"当前PDE损失权重:{w_pde}")
     logger.info(f"当前数据拟合损失: {w_data * loss_data.item():.6e} ")
     logger.info(f"当前PDE残差损失: {loss_pde.item():.6e} ")
-    logger.info(f"当前w_omega: {w_omega.item():.6e} ")
+    logger.info(f"当前w_omega: {w_omega:.6e} ")
 
     return total_loss,res_cont.mean(),res_mx.mean(),res_my.mean(),res_mz.mean(),res_energy.mean(),res_k.mean(),res_omega.mean()
 
