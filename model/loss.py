@@ -268,12 +268,12 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_r
         w_omega = 0
 
     else:  # 第四阶段 加入Omega方程
-        w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1,2)
+        w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,2000-3*PDEloss_start_epoch,1,2)
         w_cont = 1.0
         w_mom = 2.0
         w_energy = 7
-        w_k = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,6,8)
-        w_omega = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,2e-8,2e-6)  
+        w_k = sigmoid_schedule(epoch-3*PDEloss_start_epoch,2000-3*PDEloss_start_epoch,6,8)
+        w_omega = sigmoid_schedule(epoch-3*PDEloss_start_epoch,2000-3*PDEloss_start_epoch,2e-8,2e-4)  
 
     # 计算加权后的PDE总损失
     loss_pde_unweighted = (

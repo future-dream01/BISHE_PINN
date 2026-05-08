@@ -20,12 +20,12 @@ T0=249.15  # 来流静温
 P0=47181   # 来流静压
 
 # 训练超参数设定
-EPOCHES = 800       # 轮次数
+EPOCHES = 2000       # 轮次数
 BATCHSIZE = 2400   # 批次数
 PDEloss_start_epoch=200  # 开始加入PDE残差损失的轮次
 train_nan_loss=val_nan_loss=0   # 一轮中出现异常损失值的批次数量
 LOAD_CP=True       # 是否需要加载之前的检查点
-CP_PATH= f'{project_root}/outputs/weights/05-08_19-14/best_201weights.pth'    # 检查点权重文件绝对路径
+CP_PATH= f'{project_root}/outputs/weights/05-08_21-25/best_729weights.pth'    # 检查点权重文件绝对路径
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # 计算设备
 current_datetime = datetime.now().strftime("%m-%d_%H-%M")               # 当前时间
 log_file_path=f'{project_root}/outputs/训练与性能情况/{current_datetime}/损失日志.log'  # 训练日志文件的绝对路径
@@ -218,7 +218,7 @@ def train():
             logger.info(f"第一轮权重已保存")
             min_val_loss= val_loss_epoch            # 初始化最小的验证集损失
             d_epoch_num = start_epoch             # 初始化效果最好的轮次数
-        elif (epoch==EPOCHES)or(epoch==PDEloss_start_epoch)or(epoch==2*PDEloss_start_epoch)or(epoch==3*PDEloss_start_epoch):
+        elif (epoch==EPOCHES)or(epoch%100==0)or(epoch==PDEloss_start_epoch)or(epoch==2*PDEloss_start_epoch)or(epoch==3*PDEloss_start_epoch):
             save_checkpoint(M,optimizer_M,epoch,train_losses,res_cont_epoches,res_mx_epoches,res_my_epoches,res_mz_epoches,res_energy_epoches,res_k_epoches,res_omega_epoches,val_losses, f'{project_root}/outputs/weights/{current_datetime}/{epoch}weights.pth')   # 保存当前模型权重的信息
             logger.info(f"重要训练节点权重已保存")
         else:
