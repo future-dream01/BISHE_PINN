@@ -20,11 +20,11 @@ T0=249.15  # 来流静温
 P0=47181   # 来流静压
 
 # 训练超参数设定
-EPOCHES = 2000    # 轮次数
+EPOCHES = 800       # 轮次数
 BATCHSIZE = 1024    # 批次数
-PDEloss_start_epoch=500  # 开始加入PDE残差损失的轮次
+PDEloss_start_epoch=200  # 开始加入PDE残差损失的轮次
 train_nan_loss=val_nan_loss=0   # 一轮中出现异常损失值的批次数量
-LOAD_CP=True    # 是否需要加载之前的检查点
+LOAD_CP=False       # 是否需要加载之前的检查点
 CP_PATH= f'{project_root}/outputs/weights/04-27_12-53/1500weights.pth'    # 检查点权重文件绝对路径
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")   # 计算设备
 current_datetime = datetime.now().strftime("%m-%d_%H-%M")               # 当前时间

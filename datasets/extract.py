@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 # 【参数设置区域】
 # ==========================================
 # --- 通用文件与物理参数 ---
-cas_path = "050D_A0_hermites08_banmo_066_107.cas"
-zone_id = 1  # 【关键】先运行一次，看打印的Zone列表，改成正确的流体域ID
+cas_path = "05D_A0_hermites08_banmo_066_107.cas"
+zone_id = 2  # 【关键】先运行一次，看打印的Zone列表，改成正确的流体域ID
 L = 0.095       # 特征长度
 M0 = 0.66       # 来流马赫数
 T0 = 249.15     # 来流静温
@@ -36,7 +36,7 @@ near_wall_thresh_train = 0.005  # 有量纲阈值，单位m
 
 # --- 验证集参数 (Validation) ---
 output_val_csv = "050D_A0_val.csv"
-val_x_sections = [0.31, 0.38, 0.4375, 0.49] 
+val_x_sections = [0.31, 0.405, 0.4375, 0.49] 
 samples_val_section = 4000
 near_wall_ratio_val = 0.5
 near_wall_thresh_val = 0.005
