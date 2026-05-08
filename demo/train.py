@@ -6,6 +6,7 @@ import torch.optim as optim
 from loguru import logger
 from datetime import datetime
 import torch
+from torch import amp
 from torch.cuda.amp import autocast, GradScaler
 import matplotlib.pyplot as plt
 import torchvision.transforms as transforms
@@ -51,6 +52,7 @@ def train():
 
 
     optimizer_M = optim.Adam(M.parameters(), lr=0.005)    # 创建梯度优化器
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_M, factor=0.5, patience=20)
     start_epoch=1                               # 开始训练的轮次数，默认是1，如果从断点开始会更新为断点的轮次数
     train_losses = []                           # 训练集损失
     res_cont_epoches=[]                         # 训练集连续方程残差
@@ -105,57 +107,61 @@ def train():
             optimizer_M.zero_grad()  # 梯度归零
             # 前向传播
             #with autocast():
-            output_raw = M(input)
-            # input_sym=input.clone()                              # 构造对称输入
-            # input_sym[:,2:3]=-input_sym[:,2:3]
-            # input_sym=input_sym.detach()
-            # output_raw_sym=M(input_sym)    
-            # output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
-            loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,label,data_min,data_max)  # 计算损失
+            with amp.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=True):
+                output_raw = M(input)
+                # input_sym=input.clone()                              # 构造对称输入
+                # input_sym[:,2:3]=-input_sym[:,2:3]
+                # input_sym=input_sym.detach()
+                # output_raw_sym=M(input_sym)    
+                # output_final=hard_consrain(input[:,3:4],output_raw,output_raw_sym) # 硬约束
+                loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,label,data_min,data_max)  # 计算损失
 
-            #loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max) 
+                #loss = train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,M0,T0,P0,input,output_raw,label,data_min,data_max) 
 
-            # 数据接收
-            train_loss_batch=loss[0]
-            res_cont_batch=loss[1]
-            res_mx_batch=loss[2]
-            res_my_batch=loss[3]
-            res_mz_batch=loss[4]
-            res_energy_batch=loss[5]
-            res_k_batch=loss[6]
-            res_omega_batch=loss[7]
+                # 数据接收
+                train_loss_batch=loss[0]
+                res_cont_batch=loss[1]
+                res_mx_batch=loss[2]
+                res_my_batch=loss[3]
+                res_mz_batch=loss[4]
+                res_energy_batch=loss[5]
+                res_k_batch=loss[6]
+                res_omega_batch=loss[7]
 
-            train_batches += 1  # 本轮次已迭代的批次总数更新
-            # 每批次训练参数打印
-            logger.info(f"epoch:{epoch},batch:{train_batches}")
-            logger.info(f"best_epoch:{d_epoch_num}")
-            logger.info(f"loss:{train_loss_batch.item()}")
-            logger.info(f"Res_cont:{res_cont_batch.item()}")
-            logger.info(f"Res_mx:{res_mx_batch.item()}")
-            logger.info(f"Res_my:{res_my_batch.item()}")
-            logger.info(f"Res_mz:{res_mz_batch.item()}")
-            logger.info(f"Res_energy:{res_energy_batch.item()}")
-            logger.info(f"Res_k:{res_k_batch.item()}")
-            logger.info(f"Res_omega:{res_omega_batch.item()}")
+                train_batches += 1  # 本轮次已迭代的批次总数更新
+                # 每批次训练参数打印
+                logger.info(f"epoch:{epoch},batch:{train_batches}")
+                logger.info(f"best_epoch:{d_epoch_num}")
+                logger.info(f"loss:{train_loss_batch.item()}")
+                logger.info(f"Res_cont:{res_cont_batch.item()}")
+                logger.info(f"Res_mx:{res_mx_batch.item()}")
+                logger.info(f"Res_my:{res_my_batch.item()}")
+                logger.info(f"Res_mz:{res_mz_batch.item()}")
+                logger.info(f"Res_energy:{res_energy_batch.item()}")
+                logger.info(f"Res_k:{res_k_batch.item()}")
+                logger.info(f"Res_omega:{res_omega_batch.item()}")
 
-            if not torch.isnan(train_loss_batch):
-                train_loss_batch.backward()      # 反向传播
-                optimizer_M.step()                       # 梯度下降
+                if not torch.isnan(train_loss_batch):
+                    train_loss_batch.backward()
+                    # 保留你之前加的梯度裁剪，进一步防崩
+                    torch.nn.utils.clip_grad_norm_(M.parameters(), max_norm=1.0)
+                    optimizer_M.step()
+                    
 
 
-                # 累加每轮当中的训练参数
-                train_loss_epoch += train_loss_batch.item()  
-                res_cont_epoch+=res_cont_batch.item()  
-                res_mx_epoch+=res_mx_batch.item()  
-                res_my_epoch+=res_my_batch.item()  
-                res_mz_epoch+=res_mz_batch.item()  
-                res_energy_epoch+=res_energy_batch.item()  
-                res_k_epoch+=res_k_batch.item()  
-                res_omega_epoch+=res_omega_batch.item()  
-            else:
-                train_nan_loss +=1
-                logger.info("此批次损失计算出现NAN,已舍弃此损失值,不对此批次反向传播")
-                continue
+                    # 累加每轮当中的训练参数
+                    train_loss_epoch += train_loss_batch.item()  
+                    res_cont_epoch+=res_cont_batch.item()  
+                    res_mx_epoch+=res_mx_batch.item()  
+                    res_my_epoch+=res_my_batch.item()  
+                    res_mz_epoch+=res_mz_batch.item()  
+                    res_energy_epoch+=res_energy_batch.item()  
+                    res_k_epoch+=res_k_batch.item()  
+                    res_omega_epoch+=res_omega_batch.item()  
+                else:
+                    train_nan_loss +=1
+                    logger.info("此批次损失计算出现NAN,已舍弃此损失值,不对此批次反向传播")
+                    continue
 
         # 计算每轮平均训练参数
         train_loss_epoch = train_loss_epoch / (train_batches-train_nan_loss)  # 本epoch平均损失
@@ -188,6 +194,7 @@ def train():
         logger.info(f"Res_k_average:{res_k_epoch}")
         logger.info(f"Res_omega_average:{res_omega_epoch}")
 
+        scheduler.step(train_loss_epoch)  # 全局学习率调整
         # 每轮参数归零
         train_nan_loss=train_loss_epoch = res_cont_epoch=res_mx_epoch=res_my_epoch=res_mz_epoch=\
             res_energy_epoch=res_k_epoch=res_omega_epoch=0

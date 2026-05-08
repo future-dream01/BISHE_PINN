@@ -6,6 +6,8 @@ import torch.nn.functional as F
 import torch.nn.functional as F
 from loguru import logger
 import numpy as np
+from torch import amp
+
 # 使用预训练的 VGG19 模型作为感知损失的基础
 class PerceptualLoss(nn.Module):
     def __init__(self, layers=['relu2_2', 'relu3_3', 'relu4_3']):
@@ -231,11 +233,11 @@ def sigmoid_schedule(t, T, start_val, end_val):
 
 # 训练集总损失
 def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,label,data_min,data_max):
-    
     # 利用归一化量计算数据拟合损失
+    
     loss_data=data(device, output_raw, label)
 
-    # 反归一化
+# 反归一化
     output_final=denormalize_for_pde(device,output_raw,data_min,data_max)
 
     # 利用无量纲量计算PDE残差损失
@@ -273,7 +275,7 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,
         w_mom = 2.0
         w_energy = 7
         w_k = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,6,8)
-        w_omega = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e-9,2e-8)  
+        w_omega = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e-8,2e-6)  
 
     # 计算加权后的PDE总损失
     loss_pde_unweighted = (

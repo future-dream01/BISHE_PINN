@@ -254,7 +254,7 @@ class Backbone_Lin_XYZD(nn.Module):
         #x=self.norm3(x)
         x=self.silu(x)
         x=self.res1(x)
-        #x=self.res2(x)
+        x=self.res2(x)
         x=self.Lin4(x)
         #x=self.norm4(x)
         x=self.silu(x)
@@ -280,7 +280,7 @@ class Backbone_Lin_MaPr(nn.Module):
         self.res2=Resn_Lin(128,128)
         self.Lin4=nn.Linear(128,64)
         self.Lin5=nn.Linear(64,32)
-        self.Lin6=nn.Linear(32,4)
+        self.Lin6=nn.Linear(32,16)
     
     def forward(self,x):
         x=self.Lin1(x)
@@ -292,7 +292,7 @@ class Backbone_Lin_MaPr(nn.Module):
         x=self.Lin3(x)
         x=self.silu(x)
         x=self.res1(x)
-        #x=self.res2(x)
+        x=self.res2(x)
         x=self.Lin4(x)
         #x=self.norm3(x)
         x=self.silu(x)
@@ -311,13 +311,22 @@ class Resn_Lin(nn.Module):
         self.silu = nn.SiLU()
         # ✅ 维度自适应，绝对不能硬编码256
         self.lin1 = nn.Linear(input_channel, hidden_channel)
-        self.lin2 = nn.Linear(hidden_channel, input_channel)
+        self.lin2 = nn.Linear(hidden_channel, hidden_channel)
+        self.lin3 = nn.Linear(hidden_channel, hidden_channel)
+        self.lin4 = nn.Linear(hidden_channel, hidden_channel)
+        self.lin5 = nn.Linear(hidden_channel, input_channel)
 
     def forward(self, x):
         identity = x  # 残差恒等映射
         out = self.lin1(x)
         out = self.silu(out)
         out = self.lin2(out)
+        out = self.silu(out)
+        out = self.lin3(out)
+        out = self.silu(out)
+        out = self.lin4(out)
+        out = self.silu(out)
+        out = self.lin5(out)
         # ✅ 残差连接前绝对不能加激活函数！
         out = out + identity
         out = self.silu(out)

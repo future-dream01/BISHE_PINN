@@ -1,4 +1,3 @@
-# 数据集制作（仅训练集）
 import pyvista as pv
 import pandas as pd
 import numpy as np
@@ -9,11 +8,15 @@ import matplotlib.pyplot as plt
 # 【参数设置区域】
 # ==========================================
 # --- 通用文件与物理参数 ---
-cas_path = "05D_A0_hermites08_banmo_078_110.cas"
+a=90
+b=113
+
+M0 = a/100 # 来流马赫数（直接用这个）
+Pr = b/100  # 压比（直接用这个）
+
+cas_path = f"05D_A0_hermites08_banmo_0{a}_{b}.cas"
 zone_id = 2  # 【关键】先运行一次，看打印的Zone列表，改成正确的流体域ID
 L = 0.095       # 特征长度
-M0 = 0.78       # 来流马赫数（直接用这个）
-Pr = 1.10       # 压比（直接用这个）
 T0 = 249.15     # 来流静温
 P0 = 47181      # 来流静压
 U0 = M0 * (1.4 * 287 * T0) ** 0.5
@@ -25,15 +28,19 @@ x_inlet = 0.297183   # 入口X坐标
 x_outlet = 0.515712  # 出口X坐标
 
 # --- 训练集参数 (Train) ---
-output_train_csv = "05D_A0_078_110.csv"
-samples_inlet = 2000
-samples_outlet = 2000
+output_train_csv = f"05D_A0_0{a}_{b}.csv"
+samples_inlet = 10000
+samples_outlet = 10000
 N1_train = 1    # 0.297183 ~ 0.34
-N2_train = 3   # 0.34 ~ 0.47
+N2_train = 5   # 0.34 ~ 0.47
 N3_train = 1    # 0.47 ~ 0.515712
-samples_train_section = 1000
+samples_train_section = 10000
 near_wall_ratio_train = 0.7
 near_wall_thresh_train = 0.005  # 有量纲阈值，单位m
+
+# ✅ 新增：自动创建图片保存文件夹（不存在则创建）
+SAVE_PIC_DIR = "pictures"
+os.makedirs(SAVE_PIC_DIR, exist_ok=True)
 
 # ==========================================
 # 【核心函数区域】
@@ -204,21 +211,32 @@ def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio, L, U
     sampled_df = pd.concat([near_sampled, far_sampled], ignore_index=True)
     return sampled_df
 
-# 可视化函数（保留但默认注释，需要时取消注释）
-def visualize_sampling_points(slice_points, sampled_points, x_pos, set_name=""):
-    plt.figure(figsize=(9, 8))
-    plt.scatter(slice_points[:, 1]/L, slice_points[:, 2]/L, c="lightgray", s=4, alpha=0.3, label="原始所有点")
-    plt.scatter(sampled_points["Y"], sampled_points["Z"], c="crimson", s=6, alpha=0.9, label="采样点")
+# 可视化函数（空白无坐标轴 + 自动保存）
+def visualize_sampling_points(slice_points, sampled_points, x_pos, save_path):
+    """
+    可视化采样点（空白无坐标轴背景）+ 自动保存图片
+    """
+    # 创建画布
+    plt.figure(figsize=(9, 8), facecolor='white')
     
-    prefix = f"[{set_name}]" if set_name else ""
-    plt.xlabel("Y (无量纲)")
-    plt.ylabel("Z (无量纲)")
-    plt.title(f"{prefix} 截面 X = {x_pos:.6f} m\n采样总数：{len(sampled_points)}")
-    plt.legend()
+    # 绘制点
+    plt.scatter(slice_points[:, 1]/L, slice_points[:, 2]/L, 
+                c="lightgray", s=4, alpha=0.3)
+    plt.scatter(sampled_points["Y"], sampled_points["Z"], 
+                c="crimson", s=6, alpha=0.9)
+
+    # 空白无坐标轴
+    plt.axis('off')
     plt.axis("equal")
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.show()
+    plt.tight_layout(pad=0)
+
+    # 保存图片
+    plt.savefig(save_path, 
+                dpi=150,        
+                bbox_inches='tight',
+                facecolor='white')
+    
+    plt.close()
 
 # 【核心修复3】修改后的截面处理函数
 def process_sections(target_block, x_list, sample_counts, near_thresh, near_ratio, 
@@ -244,8 +262,12 @@ def process_sections(target_block, x_list, sample_counts, near_thresh, near_rati
 
         all_data.append(sampled_df)
         print(f"   完成：实际采样 {len(sampled_df)} 点")
-        # 如需可视化，取消下面这行的注释
-        # visualize_sampling_points(slice_plane.points, sampled_df, x_pos, set_name)
+        
+        # ✅ 修复：按截面X坐标命名图片，保存到pictures文件夹
+        pic_name = f"sample_X_{x_pos:.6f}.png"
+        pic_save_path = os.path.join(SAVE_PIC_DIR, pic_name)
+        visualize_sampling_points(slice_plane.points, sampled_df, x_pos, pic_save_path)
+        print(f"   采样点图片已保存：{pic_save_path}")
         
     if not all_data:
         return pd.DataFrame()
@@ -344,6 +366,7 @@ def main():
 
     print("\n" + "="*70)
     print("所有任务完成！")
+    print(f"✅ 采样点图片已全部保存到：{SAVE_PIC_DIR} 文件夹")
     print(f"✅ 核心保证：所有极值、采样数据均来自进气道内部有效点，无量纲化逻辑完全统一")
     print("="*70)
 
