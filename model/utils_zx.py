@@ -71,7 +71,7 @@ def create_valid_mesh(y, z, wall_dist):
     # 2. 生成 Delaunay 三角网格
     # 关键参数 alpha：控制“挖空”程度，越小越容易挖掉外部
     # 你可以根据你的流道大小调整这个值，建议范围 0.001 ~ 0.01 (无量纲)
-    alpha_value = 0.014 / L  # 自动适配你的特征长度
+    alpha_value = 0.03 / L  # 自动适配你的特征长度
     
     grid = cloud.delaunay_2d(alpha=alpha_value)
     
