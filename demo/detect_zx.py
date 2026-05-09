@@ -17,7 +17,7 @@ from model.utils_zx import (
 
 # ===================== 配置 =====================
 BATCHSIZE = 1024
-weight_name = "mapr_best_200weights"    # 目前最好的是697
+weight_name = "mapr_best_1233weights"    # 目前最好的是697
 weight_PATH = f'{project_root}/outputs/weights/mapr_best/{weight_name}.pth'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
