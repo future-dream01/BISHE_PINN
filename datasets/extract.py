@@ -36,8 +36,8 @@ near_wall_thresh_train = 0.005  # 有量纲阈值，单位m
 
 # --- 验证集参数 (Validation) ---
 output_val_csv = "050D_A0_val.csv"
-val_x_sections = [0.41] 
-samples_val_section = 10000
+val_x_sections = [0.31,0.41,0.438,0.490] 
+samples_val_section = 8000
 near_wall_ratio_val = 0.75
 near_wall_thresh_val = 0.005
 

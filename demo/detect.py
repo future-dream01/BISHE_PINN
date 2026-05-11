@@ -1,6 +1,8 @@
 import os, sys
 import torch
 import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 from loguru import logger
 from datetime import datetime
 import pyvista as pv
@@ -31,14 +33,14 @@ BATCHSIZE = 1024
 # ==========================================
 # 【修改这里】切换到你新训的权重路径
 # ==========================================
-weight_name = "05-08_22-34/2000weights"  # 🔧 改成你新的文件夹名
+weight_name = "05-08_22-34/best_1026weights"  # 🔧 改成你新的文件夹名
 weight_PATH = f'{project_root}/outputs/weights/{weight_name}.pth'
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 输出路径
 current_datetime = datetime.now().strftime("%m-%d_%H-%M")
-save_root = f'{project_root}/outputs/推理结果/{current_datetime}_PyVista_NoHoles'
+save_root = f'{project_root}/outputs/推理结果/{current_datetime}_PyVista_CleanScatter'
 os.makedirs(save_root, exist_ok=True)
 log_file_path = f'{save_root}/inference.log'
 logger.add(log_file_path, rotation="500 MB", level="INFO")
@@ -75,6 +77,21 @@ temp_smooth_cmap = LinearSegmentedColormap.from_list("temp_smooth", base_color_a
 discrete_colors = temp_smooth_cmap(np.linspace(0, 1, N_DISCRETE_COLORS))
 custom_discrete_cmap = ListedColormap(discrete_colors, name=f"discrete_cfd_{N_DISCRETE_COLORS}")
 
+# ===================== 散点图配置 =====================
+# 原始变量的颜色映射（和之前保持一致，每个变量固定颜色）
+SCATTER_VAR_COLORS = {
+    "U": "#1f77b4",        # 蓝色
+    "V": "#ff7f0e",        # 橙色
+    "W": "#2ca02c",        # 绿色
+    "P_dimless": "#d62728",# 红色
+    "T_dimless": "#9467bd",# 紫色
+    "K": "#8c564b",        # 棕色
+    "Omega": "#e377c2"     # 粉色
+}
+
+# 散点图采样点数（避免点太多导致图面混乱）
+SCATTER_SAMPLE_NUM = 1500  # 单变量可以适当增加采样点数
+
 # ===================== 随机种子 =====================
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -83,6 +100,42 @@ def set_seed(seed):
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
+# ===================== 【标准误差计算函数】 =====================
+def calculate_metrics(y_true, y_pred, ref_value=None):
+    """
+    计算标准学术误差指标：无量纲RMSE和R²
+    参数:
+        y_true: 真实值 (numpy.ndarray)
+        y_pred: 预测值 (numpy.ndarray)
+        ref_value: 物理参考量（用于无量纲化RMSE）
+                  本身无量纲的变量传None或1.0
+    返回:
+        rmse_dimless: 无量纲RMSE
+        r2: R²决定系数
+    """
+    # 过滤所有无效值
+    mask = ~np.isnan(y_true) & ~np.isnan(y_pred) & ~np.isinf(y_true) & ~np.isinf(y_pred)
+    y_true = y_true[mask]
+    y_pred = y_pred[mask]
+    
+    if len(y_true) < 2:
+        return 0.0, 0.0
+    
+    # 计算R²（线性变换不变，用原始值即可）
+    y_mean = np.mean(y_true)
+    sst = np.sum((y_true - y_mean) ** 2)
+    sse = np.sum((y_true - y_pred) ** 2)
+    r2 = 1 - (sse / sst) if sst != 0 else 1.0
+    
+    # 计算无量纲RMSE
+    if ref_value is None or ref_value == 0:
+        # 本身就是无量纲量（如马赫数、已无量纲化的原始输出）
+        rmse_dimless = np.sqrt(np.mean((y_true - y_pred) ** 2))
+    else:
+        rmse_dimless = np.sqrt(np.mean(((y_true - y_pred) / ref_value) ** 2))
+    
+    return rmse_dimless, r2
 
 # ===================== 【空缺修复版】网格生成 =====================
 def create_valid_mesh(y, z, wall_dist):
@@ -268,12 +321,100 @@ def plot_slice_comparison(pred_dict, true_dict, y_f, z_f, wd_f,
         plotter.close()
     logger.info(f"✅ 切片 X={x_sec_mean:.4f}m 云图已保存")
 
+# ===================== 【精简版】单变量散点图绘制函数 =====================
+def plot_single_var_scatter(pred_dict, true_dict, x_sec_mean, ma_sec_mean, var_name, save_root):
+    """
+    精简版单变量散点图（无误差指标、无坐标轴标签）
+    """
+    logger.info(f"📊 正在绘制切片 X={x_sec_mean:.4f}m 的 {var_name} 散点图...")
+    
+    # 设置全局字体
+    plt.rcParams['font.family'] = 'Times New Roman'
+    plt.rcParams['font.size'] = 12
+    
+    # 创建图形
+    fig, ax = plt.subplots(figsize=(8, 8), dpi=150)
+    
+    # 提取该变量的数据
+    if var_name not in true_dict or var_name not in pred_dict:
+        logger.warning(f"⚠️ 变量 {var_name} 不存在，跳过")
+        return
+    
+    y_true = true_dict[var_name]
+    y_pred = pred_dict[var_name]
+    
+    # 过滤无效值
+    valid_mask = ~np.isnan(y_true) & ~np.isnan(y_pred) & ~np.isinf(y_true) & ~np.isinf(y_pred)
+    y_true = y_true[valid_mask]
+    y_pred = y_pred[valid_mask]
+    
+    if len(y_true) < 10:
+        logger.warning(f"⚠️ 变量 {var_name} 有效点数不足，跳过")
+        return
+    
+    # 随机采样
+    if len(y_true) > SCATTER_SAMPLE_NUM:
+        idx = np.random.choice(len(y_true), SCATTER_SAMPLE_NUM, replace=False)
+        y_true = y_true[idx]
+        y_pred = y_pred[idx]
+    
+    # 获取该变量的颜色
+    color = SCATTER_VAR_COLORS[var_name]
+    
+    # 绘制散点
+    ax.scatter(y_true, y_pred, color=color, alpha=0.7, s=20, edgecolors='none')
+    
+    # 绘制完美预测对角线
+    min_val = min(np.min(y_true), np.min(y_pred))
+    max_val = max(np.max(y_true), np.max(y_pred))
+    # 扩展一点范围，让点不贴边
+    range_val = max_val - min_val
+    min_val -= range_val * 0.05
+    max_val += range_val * 0.05
+    
+    ax.plot([min_val, max_val], [min_val, max_val], 'k--', linewidth=2)
+    
+    # 设置图形属性（已删除坐标轴标签和误差文本框）
+    ax.set_title(f'{var_name}\nX={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f}', 
+                 fontsize=16, fontweight='bold', pad=20)
+    ax.grid(True, linestyle='--', alpha=0.7)
+    ax.set_aspect('equal', adjustable='box')
+    ax.set_xlim(min_val, max_val)
+    ax.set_ylim(min_val, max_val)
+    
+    # 隐藏坐标轴刻度标签（可选，如需显示可注释掉下面两行）
+    # ax.set_xticklabels([])
+    # ax.set_yticklabels([])
+    
+    # 保存图片
+    scatter_filename = f"{save_root}/X_{x_sec_mean:.4f}m_Ma_{ma_sec_mean:.4f}_{var_name}_Scatter_Plot.png"
+    plt.savefig(scatter_filename, bbox_inches='tight', dpi=150)
+    plt.close()
+    
+    logger.info(f"✅ 切片 X={x_sec_mean:.4f}m 的 {var_name} 散点图已保存")
+
+# ===================== 【O(n)时间复杂度】X坐标分组函数（可选，解决大内存问题） =====================
+# 如果遇到fclusterdata内存错误，把下面的注释打开，替换原来的分组代码
+"""
+def group_by_x_coordinate(X, tolerance=1e-4):
+    logger.info("🔍 正在按X坐标分组...")
+    scale = 1.0 / tolerance
+    X_rounded = np.round(X * scale).astype(np.int64)
+    unique_X_rounded, inverse_indices = np.unique(X_rounded, return_inverse=True)
+    unique_X = np.zeros(len(unique_X_rounded))
+    for i in range(len(unique_X_rounded)):
+        mask = inverse_indices == i
+        unique_X[i] = np.mean(X[mask])
+    logger.info(f"✅ 共找到 {len(unique_X)} 组切片")
+    return inverse_indices, unique_X
+"""
+
 # ===================== 主推理函数 =====================
 def infer_all_dataset():
     set_seed(42)
     logger.info("="*60)
     logger.info(f"🔥 开始推理，权重文件: {weight_name}")
-    logger.info(f"🎨 云图风格: PyVista 参考代码风格（已修复空缺问题）")
+    logger.info(f"🎨 云图风格: PyVista 参考代码风格（含精简版散点图）")
     logger.info(f"⚙️  当前 ALPHA_MULTIPLIER = {ALPHA_MULTIPLIER}")
     logger.info("="*60)
     
@@ -404,6 +545,7 @@ def infer_all_dataset():
     logger.info(f"{'T':<10} | {all_T_pred.min():<12.6f} | {all_T_pred.max():<12.6f} | {all_T_true.min():<12.6f} | {all_T_true.max():<12.6f}")
     logger.info(f"{'K':<10} | {all_K_pred.min():<12.2e} | {all_K_pred.max():<12.2e} | {all_K_true.min():<12.2e} | {all_K_true.max():<12.2e}")
     logger.info(f"{'Omega':<10} | {all_Omega_pred.min():<12.2e} | {all_Omega_pred.max():<12.2e} | {all_Omega_true.min():<12.2e} | {all_Omega_true.max():<12.2e}")
+    logger.info("="*80 + "\n")
 
     # 有量纲化（修复了之前的V_pred错误）
     Vel_pred = np.sqrt(all_U_pred**2 + all_V_pred**2 + all_W_pred**2) * U0
@@ -436,16 +578,45 @@ def infer_all_dataset():
     logger.info("="*80 + "\n")
 
     # ==============================================
-    # 绘图
+    # 定义需要计算误差的所有变量
+    # 格式: (变量名, 预测值数组, 真实值数组, 无量纲化参考量)
     # ==============================================
-    logger.info("正在绘制云图...")
+    variables_to_calculate = [
+        # 原始输出变量（物理无量纲）
+        ("U", all_U_pred, all_U_true, 1.0),
+        ("V", all_V_pred, all_V_true, 1.0),
+        ("W", all_W_pred, all_W_true, 1.0),
+        ("P_dimless", all_P_pred, all_P_true, 1.0),
+        ("T_dimless", all_T_pred, all_T_true, 1.0),
+        ("K", all_K_pred, all_K_true, U0**2),        # K无量纲化: K/U0²
+        ("Omega", all_Omega_pred, all_Omega_true, U0/L),  # Omega无量纲化: Ω*L/U0
+        
+        # 导出物理量
+        ("Velocity", Vel_pred, Vel_true, U0),
+        ("Static_P", P_pred, P_true, q0),
+        ("Temperature", T_pred, T_true, T0),
+        ("Mach", Ma_pred, Ma_true, None),
+        ("Total_P", TP_pred, TP_true, q0),
+    ]
+
+    # ==============================================
+    # 绘图 + 分切片误差计算
+    # ==============================================
+    logger.info("正在绘制云图并计算分切片误差...")
     
-    # 按X坐标分组（和原逻辑一致）
+    # 按X坐标分组（如果遇到内存错误，替换为上面的group_by_x_coordinate函数）
     from scipy.cluster.hierarchy import fclusterdata
     clusters = fclusterdata(X_dim.reshape(-1,1), t=X_TOLERANCE, criterion='distance')
     cluster_ids = np.unique(clusters)
     
+    # 如果使用O(n)分组函数，替换上面三行为：
+    # clusters, unique_X = group_by_x_coordinate(X_dim, tolerance=X_TOLERANCE)
+    # cluster_ids = np.unique(clusters)
+    
     logger.info(f"✅ 共找到 {len(cluster_ids)} 组切片")
+    
+    # 存储所有切片的误差指标
+    all_metrics = []
     
     for cid in cluster_ids:
         mask = clusters == cid
@@ -453,14 +624,24 @@ def infer_all_dataset():
         
         if len(X_sec) < 50: continue
         
-        # 流体域过滤（放宽条件，防止过滤掉内部点）
+        # 流体域过滤（和绘图用完全相同的mask）
         fluid_mask = (WALL_D_sec <= WALL_DIST_MAX + 0.3) & (WALL_D_sec >= -0.2) & (~np.isnan(WALL_D_sec))
         Y_fluid = Y_sec[fluid_mask]; Z_fluid = Z_sec[fluid_mask]; WALL_D_fluid = WALL_D_sec[fluid_mask]
         
         if len(Y_fluid) < 50: continue
 
-        # 提取该切片的物理量
+        # 提取该切片的所有物理量（包含原始变量和导出变量）
         pred_dict = {
+            # 原始输出变量（物理无量纲）
+            "U": all_U_pred[mask][fluid_mask],
+            "V": all_V_pred[mask][fluid_mask],
+            "W": all_W_pred[mask][fluid_mask],
+            "P_dimless": all_P_pred[mask][fluid_mask],
+            "T_dimless": all_T_pred[mask][fluid_mask],
+            "K": all_K_pred[mask][fluid_mask],
+            "Omega": all_Omega_pred[mask][fluid_mask],
+            
+            # 导出物理量
             "Velocity": Vel_pred[mask][fluid_mask],
             "Static_P": P_pred[mask][fluid_mask],
             "Mach": Ma_pred[mask][fluid_mask],
@@ -468,6 +649,16 @@ def infer_all_dataset():
         }
         
         true_dict = {
+            # 原始输出变量（物理无量纲）
+            "U": all_U_true[mask][fluid_mask],
+            "V": all_V_true[mask][fluid_mask],
+            "W": all_W_true[mask][fluid_mask],
+            "P_dimless": all_P_true[mask][fluid_mask],
+            "T_dimless": all_T_true[mask][fluid_mask],
+            "K": all_K_true[mask][fluid_mask],
+            "Omega": all_Omega_true[mask][fluid_mask],
+            
+            # 导出物理量
             "Velocity": Vel_true[mask][fluid_mask],
             "Static_P": P_true[mask][fluid_mask],
             "Mach": Ma_true[mask][fluid_mask],
@@ -479,18 +670,95 @@ def infer_all_dataset():
         ma_sec_mean = M0  # 单工况固定马赫数
         pr_sec_mean = 1.0 # 单工况固定压比
 
-        # 调用修复版绘图函数
+        # ===================== 计算该切片的误差指标 =====================
+        logger.info(f"\n📊 切片 X={x_sec_mean:.4f}m 误差分析:")
+        logger.info("-" * 50)
+        logger.info(f"{'变量':<12} | {'无量纲RMSE':<12} | {'R²':<12}")
+        logger.info("-" * 50)
+        
+        for var_name, y_pred_all, y_true_all, ref in variables_to_calculate:
+            # 提取该切片流体域的点（和绘图用点完全一致）
+            y_pred_slice = y_pred_all[mask][fluid_mask]
+            y_true_slice = y_true_all[mask][fluid_mask]
+            
+            # 计算标准误差指标
+            rmse, r2 = calculate_metrics(y_true_slice, y_pred_slice, ref_value=ref)
+            
+            # 添加到全局指标列表
+            all_metrics.append({
+                "X(m)": round(x_sec_mean, 4),
+                "Variable": var_name,
+                "RMSE(Dimensionless)": rmse,
+                "R²": r2
+            })
+            
+            # 打印该变量的误差
+            logger.info(f"{var_name:<12} | {rmse:<12.6f} | {r2:<12.4f}")
+        
+        logger.info("-" * 50)
+
+        # 调用云图绘制函数
         plot_slice_comparison(
             pred_dict, true_dict,
             Y_fluid, Z_fluid, WALL_D_fluid,
             x_sec_mean, ma_sec_mean, pr_sec_mean,
             save_root
         )
+        
+        # ===================== 为每个原始变量单独绘制散点图 =====================
+        logger.info(f"\n📊 开始绘制切片 X={x_sec_mean:.4f}m 的单变量散点图...")
+        for var_name in SCATTER_VAR_COLORS.keys():
+            plot_single_var_scatter(
+                pred_dict, true_dict,
+                x_sec_mean, ma_sec_mean,
+                var_name,
+                save_root
+            )
+        logger.info(f"✅ 切片 X={x_sec_mean:.4f}m 的所有单变量散点图已绘制完成")
+
+    # ==============================================
+    # 计算全局误差指标（所有流体域点）
+    # ==============================================
+    logger.info("\n" + "="*80)
+    logger.info("📊 全局模型预测精度（流体域平均）")
+    logger.info("="*80)
+    logger.info(f"{'变量':<12} | {'无量纲RMSE':<12} | {'R²':<12}")
+    logger.info("-" * 40)
+
+    # 全局流体域mask
+    global_fluid_mask = (all_WALL_D <= WALL_DIST_MAX + 0.3) & (all_WALL_D >= -0.2) & (~np.isnan(all_WALL_D))
+
+    for var_name, y_pred_all, y_true_all, ref in variables_to_calculate:
+        y_pred_global = y_pred_all[global_fluid_mask]
+        y_true_global = y_true_all[global_fluid_mask]
+        
+        rmse, r2 = calculate_metrics(y_true_global, y_pred_global, ref_value=ref)
+        
+        # 添加全局指标到列表
+        all_metrics.append({
+            "X(m)": "Global",
+            "Variable": var_name,
+            "RMSE(Dimensionless)": rmse,
+            "R²": r2
+        })
+        
+        logger.info(f"{var_name:<12} | {rmse:<12.6f} | {r2:<12.4f}")
+
+    logger.info("="*80 + "\n")
+
+    # ==============================================
+    # 保存完整误差报告为CSV
+    # ==============================================
+    metrics_df = pd.DataFrame(all_metrics)
+    csv_path = f"{save_root}/detailed_error_analysis.csv"
+    metrics_df.to_csv(csv_path, index=False, float_format="%.6f")
+    logger.info(f"✅ 完整分切片误差分析报告已保存至: {csv_path}")
 
     logger.info("\n🎉 推理完成！所有结果保存在: {save_root}")
+    logger.info("✅ 已生成分切片+分变量的RMSE/R²误差报告")
+    logger.info("✅ 已生成每个截面每个原始变量的精简版散点图")
     logger.info("✅ 已彻底解决云图全空缺问题")
     logger.info("✅ 已彻底解决标量长度不匹配问题")
-    logger.info("✅ 已修复云图间断、凹结构连线问题")
 
 if __name__ == "__main__":
     infer_all_dataset()
