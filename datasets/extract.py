@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 # 【参数设置区域】
 # ==========================================
 # --- 通用文件与物理参数 ---
-a=90
-b=113
+a=42
+b=101
 
 M0 = a/100 # 来流马赫数（直接用这个）
 Pr = b/100  # 压比（直接用这个）
@@ -28,11 +28,11 @@ x_inlet = 0.297183   # 入口X坐标
 x_outlet = 0.515712  # 出口X坐标
 
 # --- 训练集参数 (Train) ---
-output_train_csv = f"05D_A0_0{a}_{b}.csv"
+output_train_csv = f"05D_A000_0{a}_{b}.csv"
 samples_inlet = 10000
 samples_outlet = 10000
 N1_train = 1    # 0.297183 ~ 0.34
-N2_train = 5   # 0.34 ~ 0.47
+N2_train = 20   # 0.34 ~ 0.47
 N3_train = 1    # 0.47 ~ 0.515712
 samples_train_section = 10000
 near_wall_ratio_train = 0.7
