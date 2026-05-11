@@ -154,7 +154,7 @@ def data_prepare(batchsize, train_csv_path=None, val_csv_path=None):
     if train_csv_path is None:
         train_csv_path = os.path.join(project_root, "datasets/csv/train.csv")
     if val_csv_path is None:
-        val_csv_path = os.path.join(project_root, "datasets/csv/val.csv")
+        val_csv_path = os.path.join(project_root, "datasets/csv/val2.csv")
     
     train_set = Train_Dataset(train_csv_path)
     val_set = Val_Dataset(val_csv_path, train_set.input_min, train_set.input_max)

@@ -269,13 +269,22 @@ def train_loss_TOTAL(epoch,PDEloss_start_epoch,device, L,T0,P0,input,output_raw,
         w_k = sigmoid_schedule(epoch-2*PDEloss_start_epoch,PDEloss_start_epoch,1,6)
         w_omega = 0
 
-    else:  # 第四阶段 加入Omega方程
+    elif 3*PDEloss_start_epoch<epoch <= 4*PDEloss_start_epoch:  # 第四阶段 加入Omega方程
         w_pde=sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1,1.5)
         w_cont = 1.0
         w_mom = 2.0
         w_energy = 7
         w_k = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,6,8)
-        w_omega = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e-8,2e-6)  
+        w_omega = sigmoid_schedule(epoch-3*PDEloss_start_epoch,PDEloss_start_epoch,1e-7,2e-4)  
+
+    else:
+        w_pde=1.5
+        w_cont = 1.0
+        w_mom = 2.0
+        w_energy = 7
+        w_k = 8
+        w_omega = sigmoid_schedule(epoch-6*PDEloss_start_epoch,PDEloss_start_epoch,2e-4,2e-3)  
+
 
     # 计算加权后的PDE总损失
     loss_pde_unweighted = (
@@ -325,7 +334,6 @@ def hard_consrain(input_d,output,output_sym):
     # 结果合并
     output=torch.cat([U, V, W, P, T, K, Omega], dim=1)
     return output
-
 
 # 残差损失
 class RANS_PDE():

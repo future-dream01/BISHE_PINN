@@ -33,7 +33,7 @@ class PINN(nn.Module):
         self.sigmoid=nn.Sigmoid()
         self.lin1=nn.Linear(26,7)
         self._init_weights()
-        self.mapr_scale = nn.Parameter(torch.tensor(4.0)) 
+        self.mapr_scale = nn.Parameter(torch.tensor(2.0)) 
 
     def _init_weights(self):
         for m in self.modules():

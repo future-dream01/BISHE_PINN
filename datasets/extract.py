@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 # 【参数设置区域】
 # ==========================================
 # --- 通用文件与物理参数 ---
-a=42
-b=101
+a=90
+b=113
 
 M0 = a/100 # 来流马赫数（直接用这个）
 Pr = b/100  # 压比（直接用这个）
@@ -28,17 +28,27 @@ x_inlet = 0.297183   # 入口X坐标
 x_outlet = 0.515712  # 出口X坐标
 
 # --- 训练集参数 (Train) ---
-output_train_csv = f"05D_A000_0{a}_{b}.csv"
+output_train_csv = f"05D_A000_0{a}_{b}_train.csv"
 samples_inlet = 10000
 samples_outlet = 10000
 N1_train = 1    # 0.297183 ~ 0.34
-N2_train = 20   # 0.34 ~ 0.47
+N2_train = 1    # 0.34 ~ 0.47
 N3_train = 1    # 0.47 ~ 0.515712
 samples_train_section = 10000
 near_wall_ratio_train = 0.7
 near_wall_thresh_train = 0.005  # 有量纲阈值，单位m
 
-# ✅ 新增：自动创建图片保存文件夹（不存在则创建）
+# --- ✅ 新增：验证集参数 (Validation) ---
+# 【你只需要修改这里】手动指定验证集的X坐标（单位：m，不要包含进出口）
+# 示例：val_x_list = [0.31, 0.35, 0.40, 0.45, 0.50]
+val_x_list = [0.2971,0.31, 0.41, 0.438, 0.490,0.5157]  # 🔧 改成你想要的截面位置
+
+output_val_csv = f"05D_A000_0{a}_{b}_val.csv"  # 验证集输出文件名
+samples_val_section = 6000  # 验证集每个截面的采样点数
+near_wall_ratio_val = 0.7   # 验证集近壁面采样比例（和训练集保持一致）
+near_wall_thresh_val = 0.005  # 验证集近壁面阈值（和训练集保持一致）
+
+# ✅ 自动创建图片保存文件夹（不存在则创建）
 SAVE_PIC_DIR = "pictures"
 os.makedirs(SAVE_PIC_DIR, exist_ok=True)
 
@@ -212,9 +222,10 @@ def stratified_sampling(slice_data, near_thresh, total_samples, near_ratio, L, U
     return sampled_df
 
 # 可视化函数（空白无坐标轴 + 自动保存）
-def visualize_sampling_points(slice_points, sampled_points, x_pos, save_path):
+def visualize_sampling_points(slice_points, sampled_points, x_pos, set_name, save_path):
     """
     可视化采样点（空白无坐标轴背景）+ 自动保存图片
+    set_name: "train" 或 "val"，用于区分训练集和验证集图片
     """
     # 创建画布
     plt.figure(figsize=(9, 8), facecolor='white')
@@ -230,13 +241,16 @@ def visualize_sampling_points(slice_points, sampled_points, x_pos, save_path):
     plt.axis("equal")
     plt.tight_layout(pad=0)
 
-    # 保存图片
-    plt.savefig(save_path, 
+    # 保存图片（添加set_name前缀，避免覆盖）
+    pic_name = f"{set_name}_sample_X_{x_pos:.6f}.png"
+    full_save_path = os.path.join(save_path, pic_name)
+    plt.savefig(full_save_path, 
                 dpi=150,        
                 bbox_inches='tight',
                 facecolor='white')
     
     plt.close()
+    return full_save_path
 
 # 【核心修复3】修改后的截面处理函数
 def process_sections(target_block, x_list, sample_counts, near_thresh, near_ratio, 
@@ -263,10 +277,11 @@ def process_sections(target_block, x_list, sample_counts, near_thresh, near_rati
         all_data.append(sampled_df)
         print(f"   完成：实际采样 {len(sampled_df)} 点")
         
-        # ✅ 修复：按截面X坐标命名图片，保存到pictures文件夹
-        pic_name = f"sample_X_{x_pos:.6f}.png"
-        pic_save_path = os.path.join(SAVE_PIC_DIR, pic_name)
-        visualize_sampling_points(slice_plane.points, sampled_df, x_pos, pic_save_path)
+        # ✅ 修复：区分训练集和验证集图片
+        pic_save_path = visualize_sampling_points(
+            slice_plane.points, sampled_df, x_pos, 
+            set_name.lower(), SAVE_PIC_DIR
+        )
         print(f"   采样点图片已保存：{pic_save_path}")
         
     if not all_data:
@@ -298,6 +313,7 @@ def main():
     print(f"   原始X范围: {target_block.bounds[0]:.6f} ~ {target_block.bounds[1]:.6f} m")
 
     # 3. 提取进气道内部有效点的无量纲全局极值
+    # ✅ 重要：全局极值使用整个流场计算，训练集和验证集共用同一套极值
     global_min, global_max, columns = get_global_stats(
         target_block, L, U0, T0, P0, q0, x_inlet, x_outlet
     )
@@ -322,7 +338,7 @@ def main():
         else:
             train_sample_counts.append(samples_train_section)
 
-    print(f"训练集共 {len(train_x)} 个截面")
+    print(f"训练集共 {len(train_x)} 个截面（包含进出口）")
 
     # 5. 处理训练集
     print("\n" + "="*70)
@@ -332,14 +348,14 @@ def main():
         target_block, train_x, train_sample_counts,
         near_wall_thresh_train, near_wall_ratio_train,
         L, U0, T0, P0, q0,
-        x_inlet, x_outlet, # 传入这两个参数
+        x_inlet, x_outlet,
         set_name="Train"
     )
     
     if not df_train.empty:
-        # 【核心修复4】最后再检查一遍，确保采样数据没有超出极值
+        # 【最终检查】采样数据范围 vs CSV极值范围
         print("\n" + "="*70)
-        print("【最终检查】采样数据范围 vs CSV极值范围")
+        print("【训练集最终检查】采样数据范围 vs CSV极值范围")
         print("="*70)
         all_ok = True
         for col in columns:
@@ -357,17 +373,88 @@ def main():
         
         print("="*70)
         if all_ok:
-            print("✅ 所有采样数据均在极值范围内！")
+            print("✅ 所有训练集数据均在极值范围内！")
         else:
-            print("⚠️  警告：部分数据超出范围，请检查！")
+            print("⚠️  警告：部分训练集数据超出范围，请检查！")
         
         save_csv_with_header(df_train, output_train_csv, global_min, global_max, columns)
         print(f"   训练集总采样点数：{len(df_train)}")
 
+    # ==========================================
+    # ✅ 新增：处理验证集
+    # ==========================================
+    print("\n" + "="*70)
+    print("开始处理【验证集】")
+    print("="*70)
+    
+    # 验证集预处理：去重、排序、检查范围
+    val_x_raw = np.array(val_x_list)
+    val_x_raw = np.unique(val_x_raw)
+    val_x = np.sort(val_x_raw)
+    
+    # 自动检查验证集截面是否在有效范围内
+    valid_val_x = []
+    for x in val_x:
+        if x <= x_inlet + 1e-8 or x >= x_outlet - 1e-8:
+            print(f"⚠️  跳过截面 X={x:.6f}：位于进出口位置或超出流道范围")
+        else:
+            valid_val_x.append(x)
+    
+    val_x = np.array(valid_val_x)
+    if len(val_x) == 0:
+        print("❌ 错误：没有有效的验证集截面，请检查val_x_list参数！")
+    else:
+        print(f"验证集共 {len(val_x)} 个截面（不包含进出口）")
+        print(f"验证集截面位置：{[f'{x:.6f}' for x in val_x]}")
+        
+        # 验证集采样数列表（所有截面使用相同的采样数）
+        val_sample_counts = [samples_val_section] * len(val_x)
+        
+        # 处理验证集
+        df_val = process_sections(
+            target_block, val_x, val_sample_counts,
+            near_wall_thresh_val, near_wall_ratio_val,
+            L, U0, T0, P0, q0,
+            x_inlet, x_outlet,
+            set_name="Val"
+        )
+        
+        if not df_val.empty:
+            # 验证集数据范围检查
+            print("\n" + "="*70)
+            print("【验证集最终检查】采样数据范围 vs CSV极值范围")
+            print("="*70)
+            all_ok = True
+            for col in columns:
+                data_min = df_val[col].min()
+                data_max = df_val[col].max()
+                
+                # 允许1e-6的浮点误差
+                is_ok = (data_min >= global_min[col] - 1e-6) and (data_max <= global_max[col] + 1e-6)
+                status = "✅" if is_ok else "❌"
+                
+                if not is_ok:
+                    all_ok = False
+                
+                print(f"   {status} {col:8s} | 采样: {data_min:.6f}~{data_max:.6f} | 极值: {global_min[col]:.6f}~{global_max[col]:.6f}")
+            
+            print("="*70)
+            if all_ok:
+                print("✅ 所有验证集数据均在极值范围内！")
+            else:
+                print("⚠️  警告：部分验证集数据超出范围，请检查！")
+            
+            save_csv_with_header(df_val, output_val_csv, global_min, global_max, columns)
+            print(f"   验证集总采样点数：{len(df_val)}")
+
     print("\n" + "="*70)
     print("所有任务完成！")
     print(f"✅ 采样点图片已全部保存到：{SAVE_PIC_DIR} 文件夹")
-    print(f"✅ 核心保证：所有极值、采样数据均来自进气道内部有效点，无量纲化逻辑完全统一")
+    print(f"   训练集图片前缀：train_*")
+    print(f"   验证集图片前缀：val_*")
+    print(f"✅ 训练集CSV：{output_train_csv}")
+    print(f"✅ 验证集CSV：{output_val_csv}")
+    print(f"✅ 核心保证：训练集和验证集使用完全相同的全局极值、过滤标准和无量纲化规则")
     print("="*70)
 
 if __name__ == "__main__":
