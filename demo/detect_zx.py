@@ -22,13 +22,18 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 输出路径
 current_datetime = datetime.now().strftime("%m-%d_%H-%M")
-save_root = f'{project_root}/outputs/推理结果/{current_datetime}_Pure_Dimensionless'
+save_root = f'{project_root}/outputs/推理结果/{current_datetime}_Pure_Dimensionless_Clean'
 os.makedirs(save_root, exist_ok=True)
 log_file_path = f'{save_root}/inference.log'
 logger.add(log_file_path, rotation="500 MB", level="INFO")
 
+# ===================== 功能开关 =====================
+GENERATE_SLICE_SCATTER = True  # 是否生成分切片散点图
+GENERATE_GLOBAL_SCATTER = True  # 是否生成全局散点图
+PRINT_DATA_DIAGNOSIS = True     # 是否打印详细数据诊断信息
+
 # ===================== 散点图配置 =====================
-SCATTER_SAMPLE_NUM = 4000  # 每个散点图采样点数
+SCATTER_SAMPLE_NUM = 8000  # 每个散点图采样点数
 SCATTER_VAR_COLORS = {
     "U": "#1f77b4",        # 蓝色
     "V": "#ff7f0e",        # 橙色
@@ -69,10 +74,12 @@ def calculate_metrics(y_true, y_pred):
     
     return rmse, r2
 
-# ===================== 单变量散点图绘制函数 =====================
-def plot_single_var_scatter(y_true, y_pred, var_name, x_sec_mean, ma_sec_mean, pr_sec_mean, save_root):
+# ===================== 纯净版：单变量散点图绘制函数（无误差标注） =====================
+def plot_single_var_scatter(y_true, y_pred, var_name, x_sec_mean=None, ma_sec_mean=None, pr_sec_mean=None, save_root=None, is_global=False):
     """
-    纯无量纲量散点图，与误差计算使用完全相同的数据
+    纯净版散点图：已移除RMSE/R²文本框
+    1. 支持分切片和全局两种模式
+    2. 统一的学术风格
     """
     plt.rcParams['font.family'] = 'Times New Roman'
     plt.rcParams['font.size'] = 12
@@ -104,28 +111,45 @@ def plot_single_var_scatter(y_true, y_pred, var_name, x_sec_mean, ma_sec_mean, p
     max_val += range_val * 0.05
     ax.plot([min_val, max_val], [min_val, max_val], 'k--', linewidth=2)
     
+    # 设置标题
+    if is_global:
+        ax.set_title(f'{var_name}\nGlobal (All Slices & All Conditions)', 
+                     fontsize=16, fontweight='bold', pad=20)
+        scatter_filename = f"Global_{var_name}_Scatter.png"
+    else:
+        ax.set_title(f'{var_name}\nX={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f}, Pr={pr_sec_mean:.4f}', 
+                     fontsize=16, fontweight='bold', pad=20)
+        scatter_filename = f"X_{x_sec_mean:.4f}m_Ma_{ma_sec_mean:.4f}_Pr_{pr_sec_mean:.4f}_{var_name}_Scatter.png"
+    
     # 图形设置
-    ax.set_title(f'{var_name}\nX={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f}, Pr={pr_sec_mean:.4f}', 
-                 fontsize=16, fontweight='bold', pad=20)
     ax.grid(True, linestyle='--', alpha=0.7)
     ax.set_aspect('equal', adjustable='box')
     ax.set_xlim(min_val, max_val)
     ax.set_ylim(min_val, max_val)
+    ax.set_xlabel('Ground Truth', fontsize=14)
+    ax.set_ylabel('Prediction', fontsize=14)
     
     # 保存
-    scatter_filename = f"X_{x_sec_mean:.4f}m_Ma_{ma_sec_mean:.4f}_Pr_{pr_sec_mean:.4f}_{var_name}_Scatter.png"
     plt.savefig(os.path.join(save_root, scatter_filename), bbox_inches='tight', dpi=150)
     plt.close()
     
-    logger.info(f"✅ 散点图已保存: {scatter_filename}")
+    if is_global:
+        logger.info(f"✅ 全局散点图已保存: {scatter_filename}")
+    else:
+        logger.info(f"✅ 散点图已保存: {scatter_filename}")
 
 # ===================== 主函数 =====================
 def main():
     set_seed(42)
-    logger.info(f"🔥 开始纯无量纲量推理+误差分析+散点图生成")
+    logger.info("="*80)
+    logger.info(f"🔥 开始纯无量纲量推理+误差分析+散点图生成（纯净版）")
+    logger.info(f"📁 权重文件: {weight_name}")
+    logger.info(f"⚙️  分切片散点图: {'开启' if GENERATE_SLICE_SCATTER else '关闭'}")
+    logger.info(f"⚙️  全局散点图: {'开启' if GENERATE_GLOBAL_SCATTER else '关闭'}")
+    logger.info("="*80)
     
     # 1. 加载数据集
-    logger.info("加载数据集...")
+    logger.info("\n📥 加载数据集...")
     train_dataloader, val_dataloader, data_min_np, data_max_np = data_prepare(BATCHSIZE)
     data_min = torch.tensor(data_min_np, dtype=torch.float32).to(device)
     data_max = torch.tensor(data_max_np, dtype=torch.float32).to(device)
@@ -142,6 +166,7 @@ def main():
     in_range_Pr = in_max_Pr - in_min_Pr + 1e-8
 
     # 2. 加载模型
+    logger.info("\n🤖 加载模型...")
     model = PINN().to(device)
     if os.path.isfile(weight_PATH):
         checkpoint = torch.load(weight_PATH, map_location=device)
@@ -153,7 +178,7 @@ def main():
     model.eval()
 
     # 3. 推理并存储纯无量纲量
-    logger.info("正在推理...")
+    logger.info("\n🧠 开始推理...")
     buffer = {
         'X': [], 'Y': [], 'Z': [], 'WD': [], 
         'Ma': [], 'Pr': [],
@@ -163,7 +188,7 @@ def main():
     }
 
     with torch.no_grad():
-        for input_batch, target_batch in val_dataloader:
+        for batch_idx, (input_batch, target_batch) in enumerate(val_dataloader):
             input_batch = input_batch.to(device)
             target_batch = target_batch.to(device)
 
@@ -197,24 +222,57 @@ def main():
             # 真值的原始物理无量纲量
             buffer['Ut'].extend(t_np[:, 0]); buffer['Vt'].extend(t_np[:, 1]); buffer['Wt'].extend(t_np[:, 2])
             buffer['Pt'].extend(t_np[:, 3]); buffer['Tt'].extend(t_np[:, 4]); buffer['Kt'].extend(t_np[:, 5]); buffer['Ot'].extend(t_np[:, 6])
+            
+            # 打印进度
+            if (batch_idx + 1) % 10 == 0:
+                logger.info(f"   已处理 {batch_idx + 1}/{len(val_dataloader)} 个批次")
 
     # 转为numpy数组
     for k in buffer: buffer[k] = np.array(buffer[k])
     X_dim = buffer['X'] * L
 
-    # 4. 按(X + Ma)分组
-    logger.info("正在按(X, Ma)分组...")
+    # 4. 数据诊断
+    if PRINT_DATA_DIAGNOSIS:
+        logger.info("\n" + "="*80)
+        logger.info("📊 数据诊断报告")
+        logger.info("="*80)
+        logger.info(f"总点数: {len(X_dim)}")
+        logger.info(f"NaN点数: {np.sum(np.isnan(X_dim) | np.isnan(buffer['Y']) | np.isnan(buffer['Z']))}")
+        logger.info(f"Inf点数: {np.sum(np.isinf(X_dim) | np.isinf(buffer['Y']) | np.isinf(buffer['Z']))}")
+        logger.info("\n变量统计信息（物理无量纲）:")
+        logger.info(f"{'变量':<12} | {'Min(True)':<12} | {'Max(True)':<12} | {'Mean(True)':<12} | {'Std(True)':<12} | {'Min(Pred)':<12} | {'Max(Pred)':<12}")
+        logger.info("-" * 90)
+        
+        var_list = [
+            ("U", buffer['Ut'], buffer['Up']),
+            ("V", buffer['Vt'], buffer['Vp']),
+            ("W", buffer['Wt'], buffer['Wp']),
+            ("P_dimless", buffer['Pt'], buffer['Pp']),
+            ("T_dimless", buffer['Tt'], buffer['Tp']),
+            ("K", buffer['Kt'], buffer['Kp']),
+            ("Omega", buffer['Ot'], buffer['Op'])
+        ]
+        
+        for var_name, y_true, y_pred in var_list:
+            logger.info(f"{var_name:<12} | {np.min(y_true):<12.6f} | {np.max(y_true):<12.6f} | {np.mean(y_true):<12.6f} | {np.std(y_true):<12.6f} | {np.min(y_pred):<12.6f} | {np.max(y_pred):<12.6f}")
+        
+        logger.info("="*80)
+
+    # 5. 按(X + Ma)分组
+    logger.info("\n🔍 正在按(X, Ma)分组...")
     X_rounded = np.round(X_dim / X_TOLERANCE) * X_TOLERANCE
     Ma_rounded = np.round(buffer['Ma'] / MA_TOLERANCE) * MA_TOLERANCE
     x_ma_pairs = np.column_stack([X_rounded, Ma_rounded])
     unique_pairs, inverse_indices = np.unique(x_ma_pairs, axis=0, return_inverse=True)
-    logger.info(f"✅ 共找到 {len(unique_pairs)} 组切片，每组生成7张散点图，总计 {len(unique_pairs)*7} 张")
+    logger.info(f"✅ 共找到 {len(unique_pairs)} 组切片")
+    if GENERATE_SLICE_SCATTER:
+        logger.info(f"✅ 每组生成7张散点图，总计 {len(unique_pairs)*7} 张")
 
     # 存储所有误差指标
     all_metrics = []
 
-    # 5. 遍历切片计算误差并绘制散点图
-    logger.info("开始处理切片...")
+    # 6. 遍历切片计算误差并绘制散点图
+    logger.info("\n📈 开始处理切片...")
     for i, (x_sec_rounded, ma_sec_rounded) in enumerate(unique_pairs):
         mask = inverse_indices == i
 
@@ -229,7 +287,7 @@ def main():
         pr_sec_mean = np.mean(pr_slice)
         
         if len(x_loc) < 50:
-            logger.warning(f"⚠️ 切片 X={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f} 点数不足，跳过")
+            logger.warning(f"⚠️ 切片 {i+1}/{len(unique_pairs)} X={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f} 点数不足，跳过")
             continue
 
         # 流体域过滤（与训练时保持一致）
@@ -253,11 +311,11 @@ def main():
         Ot_f = buffer['Ot'][mask][fluid_mask]
 
         if len(Up_f) < 50:
-            logger.warning(f"⚠️ 切片 X={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f} 流体域点数不足，跳过")
+            logger.warning(f"⚠️ 切片 {i+1}/{len(unique_pairs)} X={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f} 流体域点数不足，跳过")
             continue
 
         # 计算误差并绘制散点图
-        logger.info(f"\n📊 切片 X={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f}, Pr={pr_sec_mean:.4f} 误差分析:")
+        logger.info(f"\n📊 切片 {i+1}/{len(unique_pairs)} X={x_sec_mean:.4f}m, Ma={ma_sec_mean:.4f}, Pr={pr_sec_mean:.4f} 误差分析:")
         logger.info("-" * 60)
         logger.info(f"{'变量':<12} | {'无量纲RMSE':<12} | {'R²':<12}")
         logger.info("-" * 60)
@@ -286,12 +344,17 @@ def main():
             
             logger.info(f"{var_name:<12} | {rmse:<12.6f} | {r2:<12.4f}")
             
-            # 绘制散点图
-            plot_single_var_scatter(y_true, y_pred, var_name, x_sec_mean, ma_sec_mean, pr_sec_mean, save_root)
+            # 绘制分切片散点图
+            if GENERATE_SLICE_SCATTER:
+                plot_single_var_scatter(
+                    y_true, y_pred, var_name,
+                    x_sec_mean, ma_sec_mean, pr_sec_mean,
+                    save_root
+                )
         
         logger.info("-" * 60)
 
-    # 6. 计算全局误差
+    # 7. 计算全局误差
     logger.info("\n" + "="*80)
     logger.info("📊 全局模型预测精度（所有工况流体域平均）")
     logger.info("="*80)
@@ -323,19 +386,52 @@ def main():
         })
         
         logger.info(f"{var_name:<12} | {rmse:<12.6f} | {r2:<12.4f}")
+        
+        # 绘制全局散点图
+        if GENERATE_GLOBAL_SCATTER:
+            plot_single_var_scatter(
+                y_true_all, y_pred_all, var_name,
+                save_root=save_root, is_global=True
+            )
 
     logger.info("="*80 + "\n")
 
-    # 7. 保存误差报告
+    # 8. 保存误差报告
     metrics_df = pd.DataFrame(all_metrics)
     csv_path = f"{save_root}/dimensionless_error_analysis.csv"
     metrics_df.to_csv(csv_path, index=False, float_format="%.6f")
     logger.info(f"✅ 完整误差分析报告已保存至: {csv_path}")
 
+    # 9. 生成总结报告
+    summary_path = f"{save_root}/summary.txt"
+    with open(summary_path, 'w') as f:
+        f.write("="*60 + "\n")
+        f.write("纯无量纲推理总结报告\n")
+        f.write("="*60 + "\n")
+        f.write(f"权重文件: {weight_name}\n")
+        f.write(f"生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"总切片数: {len(unique_pairs)}\n")
+        f.write(f"总点数: {len(X_dim)}\n")
+        f.write(f"流体域点数: {np.sum(global_fluid_mask)}\n\n")
+        f.write("全局误差指标:\n")
+        f.write("-"*40 + "\n")
+        f.write(f"{'变量':<12} | {'无量纲RMSE':<12} | {'R²':<12}\n")
+        f.write("-"*40 + "\n")
+        for var_name, y_pred_all, y_true_all in global_vars:
+            rmse, r2 = calculate_metrics(y_true_all, y_pred_all)
+            f.write(f"{var_name:<12} | {rmse:<12.6f} | {r2:<12.4f}\n")
+        f.write("="*60 + "\n")
+    
+    logger.info(f"✅ 总结报告已保存至: {summary_path}")
+
     logger.info(f"\n🎉 所有任务完成！结果保存在: {save_root}")
     logger.info("✅ 所有计算均基于反归一化后的原始物理无量纲量")
-    logger.info(f"✅ 已生成 {len(unique_pairs)*7} 张单变量散点图")
+    if GENERATE_SLICE_SCATTER:
+        logger.info(f"✅ 已生成 {len(unique_pairs)*7} 张分切片散点图（纯净版）")
+    if GENERATE_GLOBAL_SCATTER:
+        logger.info("✅ 已生成7张全局散点图（纯净版）")
     logger.info("✅ 已生成完整的分切片+全局误差报告")
+    logger.info("✅ 已生成数据诊断报告和总结报告")
 
 if __name__ == "__main__":
     main()
